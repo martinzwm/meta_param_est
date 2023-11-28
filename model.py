@@ -74,17 +74,50 @@ class AutoregressiveLSTM(nn.Module):
             (h_t_auto, c_t_auto) = (h_t, c_t)
             lstm_out = self.linear(lstm_out)
             output_t = [lstm_out]
-
+    
             # Autoregressive prediction for the next 5 steps
             for _ in range(self.predict_ahead-1):  # We already have the output for the first future timestep
                 lstm_out, (h_t_auto, c_t_auto) = self.lstm(lstm_out, (h_t_auto, c_t_auto))
                 lstm_out = self.linear(lstm_out)
                 output_t.append(lstm_out)
             outputs.append(torch.concat(output_t, dim=1))
-
+    
         # Concatenate outputs
         final_output = torch.stack(outputs, dim=1)
         return final_output, c_t
+
+
+class VAEAutoencoder(nn.Module):
+    """VAE Autoencoder for reconstructing time series with a variational latent space and optional contrastive loss capability."""
+    def __init__(self, encoder, decoder, z_dims=10):
+        super(VAEAutoencoder, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+
+        self.mu = nn.Linear(encoder.hidden_size, z_dims)
+        self.logvar = nn.Linear(encoder.hidden_size, z_dims)
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        return mu + eps*std
+
+    def forward(self, x):
+        _, seq_len, _ = x.shape
+        
+        # Encoding
+        _, c_t = self.encoder(x)
+        mu = self.mu(c_t)
+        logvar = self.logvar(c_t)
+
+        # Reparameterization
+        z = self.reparameterize(mu, logvar)
+        z = z.permute(1, 0, 2) # batch_size, seq_len, hidden_size
+        z = z.repeat(1, seq_len, 1) # repeat the timestep channel to seq_len
+        
+        # Decoding
+        recon_x, _ = self.decoder(z)
+        return recon_x.squeeze(1), mu, logvar, c_t
 
 
 class TestModel:
@@ -113,11 +146,33 @@ class TestModel:
     def test_autoregressive_lstm(self):
         lstm = AutoregressiveLSTM()
         input_tensor = torch.randn(16, 10, 4)  # Example input of shape (B, T, C)
-        output = lstm(input_tensor)
+        output, c_t = lstm(input_tensor)
         print(output.shape)  # Should be (B, T * 10, C)
+        print(c_t.shape)
+        
+    def test_vae_autoencoder(self):
+        input_size = 4
+        hidden_size = 10
+        output_size = 4
+        z_dims = 4
+        predict_ahead = 10
+        seq_len = 20 # hard code
+
+        encoder = AutoregressiveLSTM(input_size, hidden_size, 1, output_size, predict_ahead)
+        decoder = AutoregressiveLSTM(z_dims, hidden_size, 1, output_size, seq_len)
+        autoencoder = VAEAutoencoder(encoder, decoder, z_dims)
+        
+        input_tensor = torch.randn(16, seq_len, input_size)
+        recon_x, mu, logvar, c_t = autoencoder(input_tensor)  
+        print('recon_x: ', recon_x.shape)
+        print('mu: ', mu.shape)
+        print('logvar: ', logvar.shape) 
+        print('c_t: ', c_t.shape) 
+        assert recon_x.shape == input_tensor.shape
 
 
 if __name__ == "__main__":
     unittests = TestModel()
     # unittests.test_lstm()
-    unittests.test_autoregressive_lstm()
+    # unittests.test_autoregressive_lstm()
+    unittests.test_vae_autoencoder()

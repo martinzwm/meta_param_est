@@ -4,10 +4,11 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from info_nce import InfoNCE
 
-from model import TrajectoryLSTM, AutoregressiveLSTM
+from model import TrajectoryLSTM, AutoregressiveLSTM, VAEAutoencoder
 from dynamics import get_dataloader
 
 # seed
@@ -21,6 +22,85 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed_value)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def train_vae_contrastive():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    predict_ahead = 10
+    hidden_size = 20
+    z_dims=4
+    seq_len = 100 # hard code
+    
+    encoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=predict_ahead).to(device)
+    decoder = AutoregressiveLSTM(input_size=z_dims, hidden_size=hidden_size, predict_ahead=seq_len).to(device)
+    vae = VAEAutoencoder(encoder, decoder, z_dims=z_dims).to(device)
+    optimizer = optim.Adam(vae.parameters(), lr=1e-3)
+    
+    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
+    loss_fn_contrastive = InfoNCE()
+    loss_fn_reconstruct = nn.MSELoss()
+    lambda_kl = 0.1  # Weight for KL divergence term (assume lambda of reconstruction loss is 1)
+    lambda_contrastive = 0.1  # Weight for contrastive loss
+
+    num_epochs = 10000
+    for epoch in tqdm.tqdm(range(num_epochs)):
+        total_loss, total_loss_kl, total_loss_recon, total_loss_contrastive = 0.0, 0.0, 0.0, 0.0
+        
+        for i, (W, times, trajectories) in enumerate(dataloader):
+            optimizer.zero_grad()
+            
+            # Get data
+            trajectories = trajectories.to(device)
+            batch_size, sample_size, time_size, state_size = trajectories.shape # batch_size = # of param. sets
+            
+            # Sample 2 trajectories from each set of parameters for contrastive learning
+            indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
+            sample1 = trajectories[torch.arange(batch_size), indices[:, 0]] # batch_size x seq_len x state_size
+            sample2 = trajectories[torch.arange(batch_size), indices[:, 1]]
+            data = torch.concat((sample1, sample2), dim=0)
+            
+            # Run VAE
+            recon_x, mu, logvar, c_t = vae(data)
+            
+            # Reconstruction Loss
+            loss_recon = loss_fn_reconstruct(recon_x, data)
+
+            # KL Divergence Loss
+            loss_kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    
+            # Contrastive Loss
+            hidden_vecs = c_t.squeeze(0)
+            sample1 = hidden_vecs[:batch_size, :]
+            sample2 = hidden_vecs[batch_size:, :]
+
+            sample1 = F.normalize(sample1, p=2, dim=1)
+            sample2 = F.normalize(sample2, p=2, dim=1)
+            
+            loss_contrastive = loss_fn_contrastive(sample1, sample2)
+            
+            # Total loss
+            loss = loss_recon + lambda_kl * loss_kl + lambda_contrastive * loss_contrastive
+            loss.backward()
+            optimizer.step()
+
+            # Logging
+            total_loss += loss.item()
+            total_loss_recon += loss_recon.item()
+            total_loss_kl += loss_kl.item()
+            total_loss_contrastive += loss_contrastive.item()
+
+        # Log
+        if epoch % 100 == 0:
+            print("Epoch: {}, Loss: {}".format(epoch, total_loss / len(dataloader)))
+            print("Reconstruction Loss: {}".format(total_loss_recon / len(dataloader)))
+            print("KL Divergence: {}".format(total_loss_kl / len(dataloader)))
+            print("Contrastive Loss: {}".format(total_loss_contrastive / len(dataloader)))
+        
+        # Save model
+        if (epoch+1) % 1000 == 0:
+            torch.save(vae.state_dict(), f"./ckpts/vae_model_{epoch+1}.pt")
+            
 
 def train_contrastive():
     # Training loop
@@ -51,13 +131,13 @@ def train_contrastive():
             indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
             sample1 = trajectories[torch.arange(batch_size), indices[:, 0]]
             sample2 = trajectories[torch.arange(batch_size), indices[:, 1]]
-
-            # Run model
+            
+            # Run mode
             data = torch.concat((sample1, sample2), dim=0)
             input = data[:, :-1, :]
             targets = data[:, 1:, :]
             predictions, hidden_vecs = encoder(input)
-            
+
             # Predictive Loss
             # predictions_auto = predictions[:, :-(predict_ahead-1), :, :]
             predictions_auto = predictions
@@ -213,9 +293,10 @@ def opt_linear(ckpt_path="./ckpts/model_9000.pt"):
 if __name__ == "__main__":
     # # Train
     # train_contrastive()
+    train_vae_contrastive()
 
     # Evaluat on a single checkpoint
-    opt_linear("./ckpts/model_100000.pt")
+    # opt_linear("./ckpts/model_100000.pt")
 
     # # Evaluate on training set
     # for epoch in range(1000, 60001, 1000):
