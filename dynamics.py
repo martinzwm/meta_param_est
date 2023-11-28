@@ -138,9 +138,9 @@ class TrajectoryDataset(Dataset):
         return W, times, trajectories
     
 
-def get_dataloader(batch_size=32, data_path=None, num_workers=0):
+def get_dataloader(batch_size=32, data_path=None, num_workers=0, shuffle=True):
     dataset = TrajectoryDataset(data_path=data_path)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
     return dataloader
 
 
@@ -174,7 +174,7 @@ class TestDynamics:
             axs[0].set_ylabel("Displacement")
             axs[0].legend()
             axs[0].grid(True)
-            axs[0].set_title("Displacement vs. Time")
+            axs[0].set_title("k1 = {}, k2 = {}, m1 = {}, m2 = {}".format(*W.tolist()))
 
             # Velocity subplot
             axs[1].plot(times, trajectory[:, 2], label="x1_dot (m1 velocity)")
@@ -183,7 +183,6 @@ class TestDynamics:
             axs[1].set_ylabel("Velocity")
             axs[1].legend()
             axs[1].grid(True)
-            axs[1].set_title("Velocity vs. Time")
 
             plt.tight_layout()
             plt.savefig('./test_dynamics.png')
@@ -211,8 +210,8 @@ class TestDynamics:
         print(dataset[0])
 
     def test_data_generation(self):
-        data = generate_data(num_parameter_sets=5, num_trajectories_per_set=50, save_path="train_data.pickle")
-        data = generate_data(num_parameter_sets=5, num_trajectories_per_set=3, save_path="val_data.pickle")
+        # data = generate_data(num_parameter_sets=5, num_trajectories_per_set=50, save_path="train_data.pickle")
+        data = generate_data(num_parameter_sets=5, num_trajectories_per_set=2, save_path="val_data.pickle")
         
 
 if __name__ == "__main__":

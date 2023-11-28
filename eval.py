@@ -27,7 +27,7 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt"):
     # Load model and dataset
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # encoder = TrajectoryLSTM(hidden_size=10).to(device)
-    encoder = AutoregressiveLSTM(hidden_size=10, predict_ahead=10).to(device)
+    encoder = AutoregressiveLSTM(hidden_size=10, predict_ahead=20).to(device)
     encoder.load_state_dict(torch.load(ckpt_path))
     encoder.eval()
 
@@ -118,9 +118,10 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0):
     """Analytically optimize a linear layer to map hidden vectors to parameters."""
     # Load model and data
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    encoder = AutoregressiveLSTM(hidden_size=10, predict_ahead=10).to(device)
+    predict_ahead = 30
+    encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=predict_ahead).to(device)
     encoder.load_state_dict(torch.load(ckpt_path))
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
+    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4, shuffle=False)
 
     # Get the hidden vectors and parameters
     for i, (W, times, trajectories) in enumerate(dataloader):        
@@ -138,10 +139,11 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0):
     # Plot the trajectories
     gt_traj = targets[idx, :, :].detach().cpu().numpy()
     gt_times = times[0, 0, 1:].detach().cpu().numpy()
-    pred_traj = predictions[idx, 89, :].detach().cpu().numpy()
-    pred_traj = np.concatenate((gt_traj[88, :].reshape(1, -1), pred_traj), axis=0) # for continuation in visualization
-    pred_times = times[0, 0, 89:].detach().cpu().numpy()
-
+    pred_traj = predictions[idx, time_size-predict_ahead-1, :].detach().cpu().numpy()
+    pred_traj = np.concatenate((gt_traj[time_size-predict_ahead-2, :].reshape(1, -1), pred_traj), axis=0) # for continuation in visualization
+    pred_times = times[0, 0, (time_size-predict_ahead-1):].detach().cpu().numpy()
+    mae = np.mean(np.abs(pred_traj[1:] - gt_traj[-predict_ahead:]))
+    print(mae)
     fig, axs = plt.subplots(2, 1, figsize=(10, 10))
 
     # Displacement subplot
@@ -153,7 +155,7 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0):
     axs[0].set_ylabel("Displacement")
     axs[0].legend()
     axs[0].grid(True)
-    axs[0].set_title("Displacement vs. Time")
+    axs[0].set_title("m1 = {}, m2 = {}".format(*W[idx // 50, 2:].tolist()) + "\n" + "MAE = {:.4f}".format(mae))
 
     # Velocity subplot
     axs[1].plot(gt_times, gt_traj[:, 2], label="x1_dot (m1 velocity)")
@@ -164,12 +166,11 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0):
     axs[1].set_ylabel("Velocity")
     axs[1].legend()
     axs[1].grid(True)
-    axs[1].set_title("Velocity vs. Time")
 
     plt.tight_layout()
     plt.savefig('./visualize_traj.png')
     
 
 if __name__ == "__main__":
-    # evaluate(ckpt_path="./ckpts/model_60000.pt") # parameter
-    visualize_trajectory(ckpt_path="./ckpts/model_60000.pt", idx=0) # trajectory
+    evaluate(ckpt_path="./ckpts/model_h20_pa10_100000.pt") # parameter
+    # visualize_trajectory(ckpt_path="./ckpts/model_5000.pt", idx=100) # trajectory
