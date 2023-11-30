@@ -5,7 +5,7 @@ import matplotlib.cm as cm
 
 import torch
 
-from model import TrajectoryLSTM, AutoregressiveLSTM
+from model import TrajectoryLSTM, AutoregressiveLSTM, VAEAutoencoder
 from dynamics import get_dataloader
 from train import opt_linear
 
@@ -22,19 +22,26 @@ if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = False
 
 
-def evaluate(ckpt_path="./ckpts/model_60000.pt"):
+def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'):
     """Evaluate the model on the validation set."""
-    # Load model and dataset
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # encoder = TrajectoryLSTM(hidden_size=10).to(device)
-    encoder = AutoregressiveLSTM(hidden_size=10, predict_ahead=20).to(device)
-    encoder.load_state_dict(torch.load(ckpt_path))
-    encoder.eval()
-
     dataloader = get_dataloader(batch_size=32, data_path="val_data.pickle", num_workers=4)
-    linear_layer = opt_linear(ckpt_path)
+    
+    linear_layer = opt_linear(ckpt_path, model_type)
     linear_layer = torch.from_numpy(linear_layer).to(device)
 
+    # load the model
+    if model_type == 'AutoregressiveLSTM':
+        model = AutoregressiveLSTM(hidden_size=20, predict_ahead=20).to(device)
+    elif model_type == 'VAEAutoencoder':
+        encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=10).to(device)
+        decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=99, is_decoder=True).to(device)
+        model = VAEAutoencoder(encoder, decoder, 20).to(device)
+    
+    pdb.set_trace()
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))
+    model.eval()
+    
     # Get predictions and ground truth parameters
     pred_params, gt_params, labels = [], [], []
     for i, (W, times, trajectories) in enumerate(dataloader):
@@ -45,7 +52,8 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt"):
         data = trajectories.view(-1, time_size, state_size)
         input = data[:, :-1, :]
         with torch.no_grad():
-            predictions, hidden_vecs = encoder(input)
+            model_outputs = model(input)
+            hidden_vecs = model_outputs[-1] # the last entry is the hidden_vecs
         
         # Add a bias term to the hidden vectors
         hidden_vecs = hidden_vecs.squeeze(0)
@@ -73,7 +81,7 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt"):
 
     # MSE
     mae = np.mean(np.abs(pred_params - gt_params), axis=0)
-    print("MAE: ", mae)
+    print("MAE (params) on the validation set: ", mae)
 
     visualize_params_with_labels(pred_params, gt_params, string_labels)
 
@@ -172,5 +180,7 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0):
     
 
 if __name__ == "__main__":
-    evaluate(ckpt_path="./ckpts/model_h20_pa10_100000.pt") # parameter
+    evaluate("./ckpts/model_10000.pt", 'AutoregressiveLSTM') # parameter
+    # evaluate("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
+    
     # visualize_trajectory(ckpt_path="./ckpts/model_5000.pt", idx=100) # trajectory

@@ -47,7 +47,7 @@ class TrajectoryLSTM(nn.Module):
 
 class AutoregressiveLSTM(nn.Module):
     """Autoregressive LSTM model to predict the trajectory of a spring-mass system."""
-    def __init__(self, input_size=4, hidden_size=10, num_layers=1, output_size=4, predict_ahead=5):
+    def __init__(self, input_size=4, hidden_size=10, num_layers=1, output_size=4, predict_ahead=5, is_decoder=False):
         super(AutoregressiveLSTM, self).__init__()
         
         self.lstm = nn.LSTM(input_size=input_size, 
@@ -59,14 +59,16 @@ class AutoregressiveLSTM(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.predict_ahead = predict_ahead
+        self.is_decoder = is_decoder
     
-    def forward(self, x):
+    def forward(self, x, c_0=None):
         batch_size, seq_len, _ = x.shape
         outputs = []
 
         # Initialize hidden and cell states
         h_t = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(x.device)
-        c_t = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(x.device)
+        c_t = c_0 if self.is_decoder else torch.zeros(self.num_layers, batch_size, self.hidden_size)
+        c_t = c_t.to(x.device)
 
         # Process input sequence
         for t in range(seq_len-self.predict_ahead+1):
@@ -89,13 +91,13 @@ class AutoregressiveLSTM(nn.Module):
 
 class VAEAutoencoder(nn.Module):
     """VAE Autoencoder for reconstructing time series with a variational latent space and optional contrastive loss capability."""
-    def __init__(self, encoder, decoder, z_dims=10):
+    def __init__(self, encoder, decoder, hidden_size=10):
         super(VAEAutoencoder, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
 
-        self.mu = nn.Linear(encoder.hidden_size, z_dims)
-        self.logvar = nn.Linear(encoder.hidden_size, z_dims)
+        self.mu = nn.Linear(encoder.hidden_size, hidden_size)
+        self.logvar = nn.Linear(encoder.hidden_size, hidden_size)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5*logvar)
@@ -112,11 +114,10 @@ class VAEAutoencoder(nn.Module):
 
         # Reparameterization
         z = self.reparameterize(mu, logvar)
-        z = z.permute(1, 0, 2) # batch_size, seq_len, hidden_size
-        z = z.repeat(1, seq_len, 1) # repeat the timestep channel to seq_len
         
         # Decoding
-        recon_x, _ = self.decoder(z)
+        x = x[:, 0, :].unsqueeze(1).repeat(1, seq_len, 1) # use the first timestep of x, i.e. x_0, as input to decoder
+        recon_x, _ = self.decoder(x, z)
         return recon_x.squeeze(1), mu, logvar, c_t
 
 
@@ -154,13 +155,12 @@ class TestModel:
         input_size = 4
         hidden_size = 10
         output_size = 4
-        z_dims = 4
         predict_ahead = 10
-        seq_len = 20 # hard code
+        seq_len = 99
 
-        encoder = AutoregressiveLSTM(input_size, hidden_size, 1, output_size, predict_ahead)
-        decoder = AutoregressiveLSTM(z_dims, hidden_size, 1, output_size, seq_len)
-        autoencoder = VAEAutoencoder(encoder, decoder, z_dims)
+        encoder = AutoregressiveLSTM(input_size, hidden_size, 1, output_size, predict_ahead, False)
+        decoder = AutoregressiveLSTM(input_size, hidden_size, 1, output_size, seq_len, True)
+        autoencoder = VAEAutoencoder(encoder, decoder, hidden_size)
         
         input_tensor = torch.randn(16, seq_len, input_size)
         recon_x, mu, logvar, c_t = autoencoder(input_tensor)  
