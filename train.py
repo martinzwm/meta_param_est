@@ -107,7 +107,7 @@ def train_contrastive():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # encoder = TrajectoryLSTM(hidden_size=10).to(device)
     lambda_traj = 10
-    predict_ahead = 10
+    predict_ahead = 30
     encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=predict_ahead).to(device)
     # encoder.load_state_dict(torch.load("./ckpts/model_10000.pt"))
     optimizer = optim.Adam(encoder.parameters(), lr=1e-3)
@@ -126,7 +126,7 @@ def train_contrastive():
             # Get data
             trajectories = trajectories.to(device)
             batch_size, sample_size, time_size, state_size = trajectories.shape
-
+            
             # Run model
             data = trajectories.view(-1, time_size, state_size)
             input = data[:, :-1, :]
@@ -159,7 +159,6 @@ def train_contrastive():
                 sample2 = sample2 / torch.norm(sample2, dim=1, keepdim=True)
                 loss_contrastive_list.append(loss_fn_contrastive(sample1, sample2))
             loss_contrastive = torch.mean(torch.stack(loss_contrastive_list))
-
 
             # Total loss
             loss = lambda_traj * loss_predictive + loss_contrastive
