@@ -127,36 +127,39 @@ def train_contrastive():
             trajectories = trajectories.to(device)
             batch_size, sample_size, time_size, state_size = trajectories.shape
 
-            # Select 2 trajectories from each set of parameters for contrastive learning
-            indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
-            sample1 = trajectories[torch.arange(batch_size), indices[:, 0]]
-            sample2 = trajectories[torch.arange(batch_size), indices[:, 1]]
-            
-            # Run mode
-            data = torch.concat((sample1, sample2), dim=0)
+            # Run model
+            data = trajectories.view(-1, time_size, state_size)
             input = data[:, :-1, :]
             targets = data[:, 1:, :]
             predictions, hidden_vecs = encoder(input)
 
             # Predictive Loss
-            # predictions_auto = predictions[:, :-(predict_ahead-1), :, :]
             predictions_auto = predictions
-            targets_auto = torch.zeros(batch_size * 2, time_size - predict_ahead, predict_ahead, state_size).to(device)
+            targets_auto = torch.zeros(batch_size * sample_size, time_size - predict_ahead, predict_ahead, state_size).to(device)
             for i in range(predict_ahead):
                 targets_auto[:, :, i, :] = targets[:, i:time_size-predict_ahead+i, :]
-
+            
             loss_predictive = loss_fn_predictive(predictions_auto, targets_auto)
 
             # Contrastive loss
             hidden_vecs = hidden_vecs.squeeze(0)
-            sample1 = hidden_vecs[:batch_size, :]
-            sample2 = hidden_vecs[batch_size:, :]
-            # Force top k dimension to be parameters
-            sample1 = sample1[:, :10]
-            sample2 = sample2[:, :10]
-            sample1 = sample1 / torch.norm(sample1, dim=1, keepdim=True)
-            sample2 = sample2 / torch.norm(sample2, dim=1, keepdim=True)
-            loss_contrastive = loss_fn_contrastive(sample1, sample2)
+            hidden_vecs = hidden_vecs.view(batch_size, sample_size, -1)
+
+            # Sample sample_size number of times, this is a hyperparameter.
+            loss_contrastive_list = []
+            for i in range(10):
+                indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
+                sample1 = hidden_vecs[torch.arange(batch_size), indices[:, 0], :]
+                sample2 = hidden_vecs[torch.arange(batch_size), indices[:, 1], :]
+
+                # Force top k dimension to be corresponds to parameters
+                sample1 = sample1[:, :10]
+                sample2 = sample2[:, :10]
+                sample1 = sample1 / torch.norm(sample1, dim=1, keepdim=True)
+                sample2 = sample2 / torch.norm(sample2, dim=1, keepdim=True)
+                loss_contrastive_list.append(loss_fn_contrastive(sample1, sample2))
+            loss_contrastive = torch.mean(torch.stack(loss_contrastive_list))
+
 
             # Total loss
             loss = lambda_traj * loss_predictive + loss_contrastive
@@ -318,8 +321,8 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
 
 if __name__ == "__main__":
     # # Train
-    # train_contrastive()
-    train_vae_contrastive()
+    train_contrastive()
+    # train_vae_contrastive()
 
     # Evaluat on a single checkpoint
     # opt_linear("./ckpts/model_100000.pt")

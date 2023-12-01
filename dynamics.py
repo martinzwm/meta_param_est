@@ -188,6 +188,49 @@ class TestDynamics:
             plt.savefig('./test_dynamics.png')
 
         return times, trajectory
+    
+    def generate_gif(self, variable="m1"):
+        """Generate a .gif of trajectories to visualize the effect of m1 and m2 on the system"""
+        images = []
+        for v in np.linspace(1, 2, 100):
+            # Define dynamic system
+            if variable == "m1":
+                m1 = v
+                m2 = 1.0
+            elif variable == "m2":
+                m1 = 1.0
+                m2 = v
+            W = torch.tensor([1.0, 1.0, m1, m2]) # k1, k2, m1, m2
+            system = SpringMassSystem(W)
+
+            # Define initial state
+            initial_state = torch.tensor([0.1, 0.2, 0.0, 0.0])  # Initial displacements and velocities
+            t_span = [0, 10]  # From t=0 to t=10
+            dt = 0.1  # Time step
+
+            # Generate trajectories
+            times, trajectory = system.trajectory(initial_state, t_span, dt)
+
+            # Save figure
+            fig, ax = plt.subplots()
+            ax.plot(times, trajectory[:, 0], label="x1 (m1 displacement)")
+            ax.plot(times, trajectory[:, 1], label="x2 (m2 displacement)")
+            ax.set_xlabel("Time")
+            ax.set_ylabel("Displacement")
+            ax.legend()
+            ax.grid(True)
+            ax.set_title("k1 = {}, k2 = {}, m1 = {:.2f}, m2 = {:.2f}".format(*W.tolist()))
+            plt.tight_layout()
+            fig.canvas.draw()
+            image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+            image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            images.append(image)
+            plt.close()
+        
+        # Create a .gif of the trajectories
+        import imageio
+        imageio.mimsave(f'./trajectories_{variable}.gif', images, duration=100)
+
 
     def test_trajectories(self):
         # Define dynamic system
@@ -217,4 +260,5 @@ class TestDynamics:
 if __name__ == "__main__":
     test = TestDynamics()
     test.test_dynamics(plot_figure=True)
+    test.generate_gif(variable="m2")
     # test.test_data_generation()
