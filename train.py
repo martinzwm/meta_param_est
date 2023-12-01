@@ -29,12 +29,10 @@ def train_vae_contrastive():
     
     predict_ahead = 10
     hidden_size = 20
-    z_dims=4
-    seq_len = 100 # hard code
     
     encoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=predict_ahead).to(device)
-    decoder = AutoregressiveLSTM(input_size=z_dims, hidden_size=hidden_size, predict_ahead=seq_len).to(device)
-    vae = VAEAutoencoder(encoder, decoder, z_dims=z_dims).to(device)
+    decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
+    vae = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
     optimizer = optim.Adam(vae.parameters(), lr=1e-3)
     
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
@@ -61,10 +59,12 @@ def train_vae_contrastive():
             data = torch.concat((sample1, sample2), dim=0)
             
             # Run VAE
-            recon_x, mu, logvar, c_t = vae(data)
+            input = data[:, :-1, :]
+            target = data[:, 1:, :]
+            recon_x, mu, logvar, c_t = vae(input)
             
             # Reconstruction Loss
-            loss_recon = loss_fn_reconstruct(recon_x, data)
+            loss_recon = loss_fn_reconstruct(recon_x, target)
 
             # KL Divergence Loss
             loss_kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -127,7 +127,7 @@ def train_contrastive():
             trajectories = trajectories.to(device)
             batch_size, sample_size, time_size, state_size = trajectories.shape
             
-            # Run mode
+            # Run model
             data = trajectories.view(-1, time_size, state_size)
             input = data[:, :-1, :]
             targets = data[:, 1:, :]
@@ -239,69 +239,97 @@ def train_linear(ckpt_path="./ckpts/model_10000.pt", verbose=False):
     gt_params = W[:, 2:].numpy()
     pred_params = sample.detach().cpu().numpy()
     mae = np.mean(np.abs(pred_params - gt_params), axis=0)
-    print("MAE on the training set: ", mae)
+    print("MAE (params) on the training set: ", mae)
 
 
-def opt_linear(ckpt_path="./ckpts/model_9000.pt"):
-    """Analytically optimize a linear layer to map hidden vectors to parameters."""
-    # Load model and data
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=30).to(device)
-    encoder.load_state_dict(torch.load(ckpt_path))
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
-
-    # Get the hidden vectors and parameters
+def get_hidden_vectors_and_params(model, dataloader, device):
+    """
+    Extract hidden vectors (a column of ones is added as bias) and ground truth parameters for a given model.
+    """
     y, y_hat = [], []
-    for i, (W, times, trajectories) in enumerate(dataloader):        
+    for _, (W, _, trajectories) in enumerate(dataloader):        
         trajectories = trajectories.to(device)
         batch_size, sample_size, time_size, state_size = trajectories.shape
 
         # Run model
         data = trajectories.view(-1, time_size, state_size)
         input = data[:, :-1, :]
+
         with torch.no_grad():
-            predictions, hidden_vecs = encoder(input)
+            model_outputs = model(input)
+            hidden_vecs = model_outputs[-1] # the last entry is the hidden_vecs
 
-        # Get the embeddings for all the trajectories in the batch
+        # Reshape and store hidden vectors and ground truth parameters
         hidden_vecs = hidden_vecs.view(batch_size * sample_size, -1)
-
-        # Get the ground truth parameters
-        W = W[:, 2:]
-        W = W.repeat_interleave(sample_size, dim=0)
+        W = W[:, 2:].repeat_interleave(sample_size, dim=0)
 
         y_hat.append(hidden_vecs)
         y.append(W)
     
-    # Add columns of ones
-    X = torch.cat(y_hat, dim=0).cpu()
-    ones = torch.ones(X.shape[0], 1)
-    X = torch.cat((X, ones), dim=1).cpu()
-    Y = torch.cat(y, dim=0).cpu()
+    # Add columns of ones for bias term
+    hidden_vecs = torch.cat(y_hat, dim=0).cpu()
+    ones = torch.ones(hidden_vecs.shape[0], 1)
+    hidden_vecs_with_bias = torch.cat((hidden_vecs, ones), dim=1).cpu()
+    gt_params = torch.cat(y, dim=0).cpu()
 
+    return hidden_vecs_with_bias, gt_params
+
+def solve(X, Y):
+    """
+    Optimize a linear layer to map hidden vectors to parameters.
+    """
     # Optimize with analytical solution
     A_T_A_inv = torch.inverse(torch.mm(X.t(), X))
     A_T_B = torch.mm(X.t(), Y)
     linear_layer = torch.mm(A_T_A_inv, A_T_B)
-    linear_layer = linear_layer.numpy()
 
-    # Evaluate
-    pred_params = np.matmul(X, linear_layer).numpy()
-    gt_params = Y.numpy()
-    mae = np.mean(np.abs(pred_params - gt_params), axis=0)
+    return linear_layer.numpy()
+
+
+def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
+    """
+    Evaluate the model on the validation set.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
+
+    # Load the model
+    if model_type == 'AutoregressiveLSTM':
+        model = AutoregressiveLSTM(hidden_size=20, predict_ahead=20).to(device)
+    elif model_type == 'VAEAutoencoder':
+        encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=10).to(device)
+        decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=99, is_decoder=True).to(device)
+        model = VAEAutoencoder(encoder, decoder, 20).to(device)
+          
+    model.load_state_dict(torch.load(ckpt_path, map_location = device))
+    model.eval()
+
+    # Extract hidden vectors and parameters
+    hidden_vecs, gt_params = get_hidden_vectors_and_params(model, dataloader, device) # hidden_vecs here has bias column
+
+    # Solve for the linear system
+    linear_layer = solve(hidden_vecs, gt_params)
+
+    # Evaluate using the linear_layer
+    pred_params = np.matmul(hidden_vecs, linear_layer).numpy()
+    mae = np.mean(np.abs(pred_params - gt_params.numpy()), axis=0)
     print("MAE on the training set: ", mae)
 
     return linear_layer
 
+
 if __name__ == "__main__":
-    # Train
-    # train_contrastive()
+    # # Train
+    train_contrastive()
     # train_vae_contrastive()
 
     # Evaluat on a single checkpoint
-    opt_linear("./ckpts/model_1000.pt")
+    # opt_linear("./ckpts/model_100000.pt")
+    # opt_linear("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
 
     # # Evaluate on training set
     # for epoch in range(1000, 60001, 1000):
     #     ckpt_path = f"./ckpts/model_{epoch}.pt"
     #     print("Evaluating: ", ckpt_path)
     #     opt_linear(ckpt_path)
+    
