@@ -253,12 +253,12 @@ class TestDynamics:
         print(dataset[0])
 
     def test_data_generation(self):
-        # data = generate_data(num_parameter_sets=5, num_trajectories_per_set=50, save_path="train_data.pickle")
+        data = generate_data(num_parameter_sets=5, num_trajectories_per_set=100, save_path="train_data.pickle")
         data = generate_data(num_parameter_sets=5, num_trajectories_per_set=2, save_path="val_data.pickle")
         
 
 if __name__ == "__main__":
     test = TestDynamics()
-    test.test_dynamics(plot_figure=True)
-    test.generate_gif(variable="m2")
-    # test.test_data_generation()
+    # test.test_dynamics(plot_figure=True)
+    # test.generate_gif(variable="m2")
+    test.test_data_generation()
