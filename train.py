@@ -48,7 +48,7 @@ def train_vae_contrastive(config=None):
     
     # Hyperparameters
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    predict_ahead = 1
+    predict_ahead = config['predict_ahead']
     hidden_size = config['hidden_size']
     lr = config['learning_rate']
     num_epochs = config['num_epochs']
@@ -154,7 +154,7 @@ def train_contrastive(config=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # encoder = TrajectoryLSTM(hidden_size=10).to(device)
     lambda_traj = 10
-    predict_ahead = 1
+    predict_ahead = config['predict_ahead']
     hidden_size = config['hidden_size']
     lr = config['learning_rate']
     num_epochs = config['num_epochs']
@@ -397,9 +397,10 @@ def vae_hyperparam_search():
             'hidden_size': {'values': [10, 100, 200]},
             'lambda_kl': {'values': [0.05, 0.1]},
             'lambda_contrastive': {'values': [0.1, 1]}},
+            'predict_ahead': {'values': [1, 10, 30]},
         }
     sweep_id = wandb.sweep(sweep_config, project="vae_autoencoder", entity="contrastive-time-series")
-    wandb.agent(sweep_id, train_vae_contrastive)
+    wandb.agent(sweep_id, train_vae_contrastive, count=5)
     
 
 def lstm_hyperparam_search():
@@ -409,7 +410,8 @@ def lstm_hyperparam_search():
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
             'num_epochs': {'values': [5000]},
-            'hidden_size': {'values': [10, 100, 200]}}
+            'hidden_size': {'values': [10, 100, 200]}},
+            'predict_ahead': {'values': [1, 10, 30]},
         }
     sweep_id = wandb.sweep(sweep_config, project="lstm_autoregressive", entity="contrastive-time-series")
     wandb.agent(sweep_id, train_contrastive, count=5)
