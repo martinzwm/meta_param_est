@@ -397,7 +397,7 @@ def vae_hyperparam_search():
             'hidden_size': {'values': [10, 100, 200]},
             'lambda_kl': {'values': [0.05, 0.1]},
             'lambda_contrastive': {'values': [0.1, 1]}},
-            'predict_ahead': {'values': [1, 10, 30]},
+            'predict_ahead': {'values': [1]},
         }
     sweep_id = wandb.sweep(sweep_config, project="vae_autoencoder", entity="contrastive-time-series")
     wandb.agent(sweep_id, train_vae_contrastive, count=5)
