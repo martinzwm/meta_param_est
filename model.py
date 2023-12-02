@@ -115,6 +115,7 @@ class VAEAutoencoder(nn.Module):
         
         # Encoding
         _, c_t = self.encoder(x)
+        c_t = self.encoder.get_embedding(c_t)
         mu = self.mu(c_t)
         logvar = self.logvar(c_t)
 

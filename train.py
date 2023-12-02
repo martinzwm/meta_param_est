@@ -25,17 +25,24 @@ if torch.cuda.is_available():
 
 
 def train_vae_contrastive():
+    # Hyperparameters
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    predict_ahead = 1
+    hidden_size = 100
+    hidden_size_param = 100
     
-    predict_ahead = 10
-    hidden_size = 20
-    
-    encoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=predict_ahead).to(device)
+    # Load model
+    encoder = AutoregressiveLSTM(
+        hidden_size=hidden_size, 
+        hidden_size_param=hidden_size_param, 
+        predict_ahead=predict_ahead
+    ).to(device)
     decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
     vae = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
-    optimizer = optim.Adam(vae.parameters(), lr=1e-3)
+    optimizer = optim.Adam(encoder.parameters(), lr=1e-2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10000, T_mult=1, eta_min=1e-4)
     
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
+    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=8)
     loss_fn_contrastive = InfoNCE()
     loss_fn_reconstruct = nn.MSELoss()
     lambda_kl = 0.1  # Weight for KL divergence term (assume lambda of reconstruction loss is 1)
@@ -83,6 +90,7 @@ def train_vae_contrastive():
             loss = loss_recon + lambda_kl * loss_kl + lambda_contrastive * loss_contrastive
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             # Logging
             total_loss += loss.item()
@@ -109,7 +117,7 @@ def train_contrastive():
     lambda_traj = 10
     predict_ahead = 1
     hidden_size = 100
-    hidden_size_param = 10
+    hidden_size_param = 100
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
         hidden_size_param=hidden_size_param, 
@@ -119,7 +127,7 @@ def train_contrastive():
     optimizer = optim.Adam(encoder.parameters(), lr=1e-2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10000, T_mult=1, eta_min=1e-4)
 
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
+    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=8)
     loss_fn_contrastive = InfoNCE()
     loss_fn_predictive = nn.MSELoss()
 
@@ -139,6 +147,7 @@ def train_contrastive():
             input = data[:, :-1, :]
             targets = data[:, 1:, :]
             predictions, hidden_vecs = encoder(input)
+            hidden_vecs = encoder.get_embedding(hidden_vecs)
 
             # Predictive Loss
             predictions_auto = predictions
@@ -250,7 +259,7 @@ def train_linear(ckpt_path="./ckpts/model_10000.pt", verbose=False):
     print("MAE (params) on the training set: ", mae)
 
 
-def get_hidden_vectors_and_params(model, dataloader, device):
+def get_hidden_vectors_and_params(model, dataloader, device, model_type="AutoregressiveLSTM"):
     """
     Extract hidden vectors (a column of ones is added as bias) and ground truth parameters for a given model.
     """
@@ -266,6 +275,8 @@ def get_hidden_vectors_and_params(model, dataloader, device):
         with torch.no_grad():
             model_outputs = model(input)
             hidden_vecs = model_outputs[-1] # the last entry is the hidden_vecs
+            if model_type == "AutoregressiveLSTM":
+                hidden_vecs = model.get_embedding(hidden_vecs)
 
         # Reshape and store hidden vectors and ground truth parameters
         hidden_vecs = hidden_vecs.view(batch_size * sample_size, -1)
@@ -286,11 +297,7 @@ def solve(X, Y):
     """
     Optimize a linear layer to map hidden vectors to parameters.
     """
-    # Optimize with analytical solution
-    A_T_A_inv = torch.inverse(torch.mm(X.t(), X))
-    A_T_B = torch.mm(X.t(), Y)
-    linear_layer = torch.mm(A_T_A_inv, A_T_B)
-
+    linear_layer = torch.linalg.lstsq(X, Y).solution
     return linear_layer.numpy()
 
 
@@ -301,18 +308,19 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
 
+    hidden_size=100
+    hidden_size_param=100
+    predict_ahead=1
+    encoder = AutoregressiveLSTM(
+        hidden_size=hidden_size, 
+        hidden_size_param=hidden_size_param, 
+        predict_ahead=predict_ahead
+    ).to(device)
+
     # Load the model
     if model_type == 'AutoregressiveLSTM':
-        hidden_size=100
-        hidden_size_param=10
-        predict_ahead=1
-        model = AutoregressiveLSTM(
-            hidden_size=hidden_size, 
-            hidden_size_param=hidden_size_param, 
-            predict_ahead=predict_ahead
-        ).to(device)
+        model = encoder
     elif model_type == 'VAEAutoencoder':
-        encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=10).to(device)
         decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=99, is_decoder=True).to(device)
         model = VAEAutoencoder(encoder, decoder, 20).to(device)
           
@@ -320,7 +328,7 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
     model.eval()
 
     # Extract hidden vectors and parameters
-    hidden_vecs, gt_params = get_hidden_vectors_and_params(model, dataloader, device) # hidden_vecs here has bias column
+    hidden_vecs, gt_params = get_hidden_vectors_and_params(model, dataloader, device, model_type) # hidden_vecs here has bias column
 
     # Solve for the linear system
     linear_layer = solve(hidden_vecs, gt_params)
@@ -329,7 +337,6 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
     pred_params = np.matmul(hidden_vecs, linear_layer).numpy()
     mae = np.mean(np.abs(pred_params - gt_params.numpy()), axis=0)
     print("MAE (params) on the training set: ", mae)
-
     return linear_layer
 
 
@@ -338,8 +345,8 @@ if __name__ == "__main__":
     # train_contrastive()
     train_vae_contrastive()
 
-    # Evaluat on a single checkpoint
-    # opt_linear("./ckpts/model_1000.pt")
+    # # Evaluat on a single checkpoint
+    # opt_linear("./ckpts/model_4000.pt")
     # opt_linear("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
 
     # # Evaluate on training set
