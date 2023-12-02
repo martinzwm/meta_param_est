@@ -396,9 +396,10 @@ def vae_hyperparam_search():
             'num_epochs': {'values': [5000]},
             'hidden_size': {'values': [10, 100, 200]},
             'lambda_kl': {'values': [0.05, 0.1]},
-            'lambda_contrastive': {'values': [0.1, 1]}},
+            'lambda_contrastive': {'values': [0.1, 1]},
             'predict_ahead': {'values': [1]},
         }
+    }
     sweep_id = wandb.sweep(sweep_config, project="vae_autoencoder", entity="contrastive-time-series")
     wandb.agent(sweep_id, train_vae_contrastive, count=5)
     
@@ -410,9 +411,10 @@ def lstm_hyperparam_search():
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
             'num_epochs': {'values': [5000]},
-            'hidden_size': {'values': [10, 100, 200]}},
+            'hidden_size': {'values': [10, 100, 200]},
             'predict_ahead': {'values': [1, 10, 30]},
         }
+    }
     sweep_id = wandb.sweep(sweep_config, project="lstm_autoregressive", entity="contrastive-time-series")
     wandb.agent(sweep_id, train_contrastive, count=5)
     
