@@ -43,8 +43,8 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
     if model_type == 'AutoregressiveLSTM':
         model = encoder
     elif model_type == 'VAEAutoencoder':
-        decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=99, is_decoder=True).to(device)
-        model = VAEAutoencoder(encoder, decoder, 20).to(device)
+        decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
+        model = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
     
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
@@ -207,8 +207,8 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
 
 if __name__ == "__main__":
     # Evaluate parameters
-    evaluate("./ckpts/model_6000.pt", 'AutoregressiveLSTM')
-    # evaluate("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
+    evaluate("./ckpts/model_10000.pt", 'AutoregressiveLSTM')
+    # evaluate("./ckpts/vae_model_10000.pt", 'VAEAutoencoder')
     
     # Trajectories
     # visualize_trajectory("./ckpts/model_5000.pt", 100, 'AutoregressiveLSTM')

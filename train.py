@@ -321,8 +321,8 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
     if model_type == 'AutoregressiveLSTM':
         model = encoder
     elif model_type == 'VAEAutoencoder':
-        decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=99, is_decoder=True).to(device)
-        model = VAEAutoencoder(encoder, decoder, 20).to(device)
+        decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
+        model = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
           
     model.load_state_dict(torch.load(ckpt_path, map_location = device))
     model.eval()
