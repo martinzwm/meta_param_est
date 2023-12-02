@@ -28,8 +28,10 @@ if torch.cuda.is_available():
     
 # default config if no sweep
 default_config = {
-    'learning_rate': 1e-3,
-    'hidden_size': 20,
+    'learning_rate': 1e-2,
+    'num_epochs': 5000,
+    'predict_ahead': 1, # 1 for autoregressive, 99 for VAE
+    'hidden_size': 100,
     'lambda_kl': 0.1,
     'lambda_contrastive': 0.1,
 }
@@ -48,15 +50,14 @@ def train_vae_contrastive(config=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     predict_ahead = 1
     hidden_size = config['hidden_size']
-    hidden_size_param = config['hidden_size_param']
     lr = config['learning_rate']
+    num_epochs = config['num_epochs']
     lambda_kl = config['lambda_kl']
     lambda_contrastive = config['lambda_contrastive']
 
     # Load model
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
-        hidden_size_param=hidden_size_param, 
         predict_ahead=predict_ahead
     ).to(device)
     decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
@@ -68,7 +69,6 @@ def train_vae_contrastive(config=None):
     loss_fn_contrastive = InfoNCE()
     loss_fn_reconstruct = nn.MSELoss()
 
-    num_epochs = 10000
     for epoch in tqdm.tqdm(range(num_epochs)):
         total_loss, total_loss_kl, total_loss_recon, total_loss_contrastive = 0.0, 0.0, 0.0, 0.0
         
@@ -156,13 +156,12 @@ def train_contrastive(config=None):
     lambda_traj = 10
     predict_ahead = 1
     hidden_size = config['hidden_size']
-    hidden_size_param = config['hidden_size_param']
     lr = config['learning_rate']
+    num_epochs = config['num_epochs']
     
     # Load model
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
-        hidden_size_param=hidden_size_param, 
         predict_ahead=predict_ahead
     ).to(device)
     # encoder.load_state_dict(torch.load("./ckpts/model_10000.pt"))
@@ -173,7 +172,6 @@ def train_contrastive(config=None):
     loss_fn_contrastive = InfoNCE()
     loss_fn_predictive = nn.MSELoss()
 
-    num_epochs = 10000
     for epoch in tqdm.tqdm(range(num_epochs)):
         total_loss, total_loss_contrastive, total_loss_predictive = 0.0, 0.0, 0.0
         
@@ -360,11 +358,9 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
 
     hidden_size=100
-    hidden_size_param=100
     predict_ahead=1
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
-        hidden_size_param=hidden_size_param, 
         predict_ahead=predict_ahead
     ).to(device)
 
@@ -396,10 +392,11 @@ def vae_hyperparam_search():
         'method': 'bayes', 
         'metric': {'name': 'total_loss', 'goal': 'minimize'},
         'parameters': {
-            'learning_rate': {'distribution': 'log_uniform', 'min': -10, 'max': -4},
-            'hidden_size': {'values': [20, 40, 60]},
+            'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
+            'num_epochs': {'values': [5000]},
+            'hidden_size': {'values': [10, 100, 200]},
             'lambda_kl': {'values': [0.05, 0.1]},
-            'lambda_contrastive': {'values': [0.1, 1]}}
+            'lambda_contrastive': {'values': [0.1, 1]}},
         }
     sweep_id = wandb.sweep(sweep_config, project="vae_autoencoder", entity="contrastive-time-series")
     wandb.agent(sweep_id, train_vae_contrastive)
@@ -410,20 +407,22 @@ def lstm_hyperparam_search():
         'method': 'bayes', 
         'metric': {'name': 'total_loss', 'goal': 'minimize'},
         'parameters': {
-            'learning_rate': {'distribution': 'log_uniform', 'min': -12, 'max': -6},
-            'hidden_size': {'values': [20, 40, 60]}}
+            'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
+            'num_epochs': {'values': [5000]},
+            'hidden_size': {'values': [10, 100, 200]}}
         }
     sweep_id = wandb.sweep(sweep_config, project="lstm_autoregressive", entity="contrastive-time-series")
-    wandb.agent(sweep_id, train_contrastive)
+    wandb.agent(sweep_id, train_contrastive, count=5)
     
+
 if __name__ == "__main__":
     # # Train
-    train_contrastive(default_config)    
+    # train_contrastive(default_config)    
     # train_vae_contrastive(default_config)
     
-    # # Sweep
-    # lstm_hyperparam_search()
-    # vae_hyperparam_search()
+    # Sweep
+    lstm_hyperparam_search()
+    vae_hyperparam_search()
     
 
     # # Evaluat on a single checkpoint

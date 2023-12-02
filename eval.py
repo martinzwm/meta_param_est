@@ -32,10 +32,8 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
 
     predict_ahead = 1
     hidden_size = 100
-    hidden_size_param = 100
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
-        hidden_size_param=hidden_size_param, 
         predict_ahead=predict_ahead
     ).to(device)
 
