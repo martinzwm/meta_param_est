@@ -107,10 +107,17 @@ def train_contrastive():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # encoder = TrajectoryLSTM(hidden_size=10).to(device)
     lambda_traj = 10
-    predict_ahead = 30
-    encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=predict_ahead).to(device)
+    predict_ahead = 1
+    hidden_size = 100
+    hidden_size_param = 10
+    encoder = AutoregressiveLSTM(
+        hidden_size=hidden_size, 
+        hidden_size_param=hidden_size_param, 
+        predict_ahead=predict_ahead
+    ).to(device)
     # encoder.load_state_dict(torch.load("./ckpts/model_10000.pt"))
-    optimizer = optim.Adam(encoder.parameters(), lr=1e-3)
+    optimizer = optim.Adam(encoder.parameters(), lr=1e-2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10000, T_mult=1, eta_min=1e-4)
 
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
     loss_fn_contrastive = InfoNCE()
@@ -164,6 +171,7 @@ def train_contrastive():
             loss = lambda_traj * loss_predictive + loss_contrastive
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             # Logging
             total_loss += loss.item()
@@ -295,7 +303,14 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
 
     # Load the model
     if model_type == 'AutoregressiveLSTM':
-        model = AutoregressiveLSTM(hidden_size=20, predict_ahead=20).to(device)
+        hidden_size=100
+        hidden_size_param=10
+        predict_ahead=1
+        model = AutoregressiveLSTM(
+            hidden_size=hidden_size, 
+            hidden_size_param=hidden_size_param, 
+            predict_ahead=predict_ahead
+        ).to(device)
     elif model_type == 'VAEAutoencoder':
         encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=10).to(device)
         decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=99, is_decoder=True).to(device)
@@ -319,12 +334,12 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
 
 
 if __name__ == "__main__":
-    # # Train
-    train_contrastive()
-    # train_vae_contrastive()
+    # Train
+    # train_contrastive()
+    train_vae_contrastive()
 
     # Evaluat on a single checkpoint
-    # opt_linear("./ckpts/model_100000.pt")
+    # opt_linear("./ckpts/model_1000.pt")
     # opt_linear("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
 
     # # Evaluate on training set
@@ -332,4 +347,3 @@ if __name__ == "__main__":
     #     ckpt_path = f"./ckpts/model_{epoch}.pt"
     #     print("Evaluating: ", ckpt_path)
     #     opt_linear(ckpt_path)
-    

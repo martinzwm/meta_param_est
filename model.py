@@ -47,7 +47,7 @@ class TrajectoryLSTM(nn.Module):
 
 class AutoregressiveLSTM(nn.Module):
     """Autoregressive LSTM model to predict the trajectory of a spring-mass system."""
-    def __init__(self, input_size=4, hidden_size=10, num_layers=1, output_size=4, predict_ahead=5, is_decoder=False):
+    def __init__(self, input_size=4, hidden_size=10, hidden_size_param=10, num_layers=1, output_size=4, predict_ahead=5, is_decoder=False):
         super(AutoregressiveLSTM, self).__init__()
         
         self.lstm = nn.LSTM(input_size=input_size, 
@@ -56,6 +56,7 @@ class AutoregressiveLSTM(nn.Module):
                             batch_first=True)
         
         self.linear = nn.Linear(hidden_size, output_size)
+        self.linear_param = nn.Linear(hidden_size, hidden_size_param)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.predict_ahead = predict_ahead
@@ -87,6 +88,11 @@ class AutoregressiveLSTM(nn.Module):
         # Concatenate outputs
         final_output = torch.stack(outputs, dim=1)
         return final_output, c_t
+
+    def get_embedding(self, c_n):
+        # Get hidden state embedding
+        latent = self.linear_param(c_n)
+        return latent
 
 
 class VAEAutoencoder(nn.Module):

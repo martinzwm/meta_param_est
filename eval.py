@@ -32,7 +32,14 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
 
     # load the model
     if model_type == 'AutoregressiveLSTM':
-        model = AutoregressiveLSTM(hidden_size=20, predict_ahead=20).to(device)
+        predict_ahead = 1
+        hidden_size = 100
+        hidden_size_param = 10
+        model = AutoregressiveLSTM(
+            hidden_size=hidden_size, 
+            hidden_size_param=hidden_size_param, 
+            predict_ahead=predict_ahead
+        ).to(device)
     elif model_type == 'VAEAutoencoder':
         encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=10).to(device)
         decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=99, is_decoder=True).to(device)
@@ -197,9 +204,9 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
 
 if __name__ == "__main__":
     # Evaluate parameters
-    # evaluate("./ckpts/model_10000.pt", 'AutoregressiveLSTM')
+    evaluate("./ckpts/model_2000.pt", 'AutoregressiveLSTM')
     # evaluate("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
     
     # Trajectories
     # visualize_trajectory("./ckpts/model_5000.pt", 100, 'AutoregressiveLSTM')
-    visualize_trajectory("./ckpts/vae_model_1000.pt", 100, 'VAEAutoencoder')
+    # visualize_trajectory("./ckpts/vae_model_1000.pt", 100, 'VAEAutoencoder')
