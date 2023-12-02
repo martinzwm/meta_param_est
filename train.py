@@ -313,7 +313,7 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
     # Evaluate using the linear_layer
     pred_params = np.matmul(hidden_vecs, linear_layer).numpy()
     mae = np.mean(np.abs(pred_params - gt_params.numpy()), axis=0)
-    print("MAE on the training set: ", mae)
+    print("MAE (params) on the training set: ", mae)
 
     return linear_layer
 

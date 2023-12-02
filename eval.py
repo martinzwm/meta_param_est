@@ -38,7 +38,6 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
         decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=99, is_decoder=True).to(device)
         model = VAEAutoencoder(encoder, decoder, 20).to(device)
     
-    pdb.set_trace()
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
     
@@ -122,14 +121,23 @@ def visualize_params_with_labels(pred_params, gt_params, labels):
     plt.savefig('./params.png')
 
 
-def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0):
+def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='AutoregressiveLSTM'):
     """Analytically optimize a linear layer to map hidden vectors to parameters."""
-    # Load model and data
+    # Load data
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    predict_ahead = 30
-    encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=predict_ahead).to(device)
-    encoder.load_state_dict(torch.load(ckpt_path))
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4, shuffle=False)
+
+    # Load model
+    if model_type == 'AutoregressiveLSTM':
+        predict_ahead = 30
+        model = AutoregressiveLSTM(hidden_size=20, predict_ahead=predict_ahead).to(device)
+    elif model_type == 'VAEAutoencoder':
+        predict_ahead = 99
+        encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=10).to(device)
+        decoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=predict_ahead, is_decoder=True).to(device)
+        model = VAEAutoencoder(encoder, decoder, 20).to(device)
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))
+    model.eval()
 
     # Get the hidden vectors and parameters
     for i, (W, times, trajectories) in enumerate(dataloader):        
@@ -141,16 +149,24 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0):
         input = data[:, :-1, :]
         targets = data[:, 1:, :]
         with torch.no_grad():
-            predictions, hidden_vecs = encoder(input)
+            model_outputs = model(input)
+            predictions = model_outputs[0]
         break
 
     # Plot the trajectories
     gt_traj = targets[idx, :, :].detach().cpu().numpy()
     gt_times = times[0, 0, 1:].detach().cpu().numpy()
-    pred_traj = predictions[idx, time_size-predict_ahead-1, :].detach().cpu().numpy()
-    pred_traj = np.concatenate((gt_traj[time_size-predict_ahead-2, :].reshape(1, -1), pred_traj), axis=0) # for continuation in visualization
-    pred_times = times[0, 0, (time_size-predict_ahead-1):].detach().cpu().numpy()
-    mae = np.mean(np.abs(pred_traj[1:] - gt_traj[-predict_ahead:]))
+
+    if model_type == 'AutoregressiveLSTM':
+        pred_traj = predictions[idx, time_size-predict_ahead-1, :].detach().cpu().numpy()
+        pred_traj = np.concatenate((gt_traj[time_size-predict_ahead-2, :].reshape(1, -1), pred_traj), axis=0) # for continuation in visualization
+        pred_times = times[0, 0, (time_size-predict_ahead-1):].detach().cpu().numpy()
+        mae = np.mean(np.abs(pred_traj[1:] - gt_traj[-predict_ahead:]))
+    elif model_type == 'VAEAutoencoder':
+        pred_traj = predictions[idx].detach().cpu().numpy()
+        pred_times = gt_times
+        mae = np.mean(np.abs(pred_traj - gt_traj))
+
     print(mae)
     fig, axs = plt.subplots(2, 1, figsize=(10, 10))
 
@@ -176,11 +192,14 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0):
     axs[1].grid(True)
 
     plt.tight_layout()
-    plt.savefig('./visualize_traj.png')
+    plt.savefig(f'./visualize_traj_{model_type}.png')
     
 
 if __name__ == "__main__":
-    evaluate("./ckpts/model_10000.pt", 'AutoregressiveLSTM') # parameter
+    # Evaluate parameters
+    # evaluate("./ckpts/model_10000.pt", 'AutoregressiveLSTM')
     # evaluate("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
     
-    # visualize_trajectory(ckpt_path="./ckpts/model_5000.pt", idx=100) # trajectory
+    # Trajectories
+    # visualize_trajectory("./ckpts/model_5000.pt", 100, 'AutoregressiveLSTM')
+    visualize_trajectory("./ckpts/vae_model_1000.pt", 100, 'VAEAutoencoder')
