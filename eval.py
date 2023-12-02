@@ -198,8 +198,8 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
 if __name__ == "__main__":
     # Evaluate parameters
     # evaluate("./ckpts/model_10000.pt", 'AutoregressiveLSTM')
-    # evaluate("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
+    evaluate("./ckpts/vae_model_6000.pt", 'VAEAutoencoder')
     
     # Trajectories
     # visualize_trajectory("./ckpts/model_5000.pt", 100, 'AutoregressiveLSTM')
-    visualize_trajectory("./ckpts/vae_model_1000.pt", 100, 'VAEAutoencoder')
+    # visualize_trajectory("./ckpts/vae_model_6000.pt", 100, 'VAEAutoencoder')

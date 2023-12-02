@@ -1,6 +1,8 @@
 import pdb
 import tqdm
 import numpy as np
+import wandb
+import argparse
 
 import torch
 import torch.nn as nn
@@ -23,23 +25,40 @@ if torch.cuda.is_available():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-
-def train_vae_contrastive():
+# default config if no sweep
+default_config = {
+    'learning_rate': 1e-3,
+    'hidden_size': 20,
+    'lambda_kl': 0.1,
+    'lambda_contrastive': 0.1,
+}
+    
+def train_vae_contrastive(config=None):
+    # Initialize wandb if config is not None
+    log_to_wandb = False
+    if config is None:
+        wandb.init(config=config, project="vae_autoencoder", entity="contrastive-time-series")
+        config = wandb.config
+        log_to_wandb = True
+    else:
+        config = default_config
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    predict_ahead = 10
-    hidden_size = 20
+    predict_ahead = 1
+    hidden_size = config['hidden_size']
+    lr = config['learning_rate']
+    lambda_kl = config['lambda_kl']
+    lambda_contrastive = config['lambda_contrastive']
     
     encoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=predict_ahead).to(device)
     decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
     vae = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
-    optimizer = optim.Adam(vae.parameters(), lr=1e-3)
+    optimizer = optim.Adam(vae.parameters(), lr=lr)
     
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
     loss_fn_contrastive = InfoNCE()
     loss_fn_reconstruct = nn.MSELoss()
-    lambda_kl = 0.1  # Weight for KL divergence term (assume lambda of reconstruction loss is 1)
-    lambda_contrastive = 0.1  # Weight for contrastive loss
 
     num_epochs = 10000
     for epoch in tqdm.tqdm(range(num_epochs)):
@@ -89,28 +108,49 @@ def train_vae_contrastive():
             total_loss_recon += loss_recon.item()
             total_loss_kl += loss_kl.item()
             total_loss_contrastive += loss_contrastive.item()
-
-        # Log
+        
+        # Save model
         if epoch % 100 == 0:
             print("Epoch: {}, Loss: {}".format(epoch, total_loss / len(dataloader)))
             print("Reconstruction Loss: {}".format(total_loss_recon / len(dataloader)))
             print("KL Divergence: {}".format(total_loss_kl / len(dataloader)))
             print("Contrastive Loss: {}".format(total_loss_contrastive / len(dataloader)))
+            
+            # Log metrics to wandb
+            if log_to_wandb:
+                wandb.log({"epoch": epoch, "total_loss": total_loss, "recon_loss": total_loss_recon,
+                        "kl_loss": total_loss_kl, "contrastive_loss": total_loss_contrastive})
         
         # Save model
         if (epoch+1) % 1000 == 0:
-            torch.save(vae.state_dict(), f"./ckpts/vae_model_{epoch+1}.pt")
+            model_path = f"./ckpts/vae_model_{epoch+1}.pt"
+            
+            if log_to_wandb:
+                wandb.save(model_path)  # Save model checkpoints to wandb
+            else: 
+                torch.save(vae.state_dict(), model_path)
             
 
-def train_contrastive():
+def train_contrastive(config=None):
+    # Initialize wandb if config is not None
+    log_to_wandb = False
+    if config is None:
+        wandb.init(config=config, project="vae_autoencoder", entity="contrastive-time-series")
+        config = wandb.config
+        log_to_wandb = True
+    else:
+        config = default_config
+    
     # Training loop
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # encoder = TrajectoryLSTM(hidden_size=10).to(device)
     lambda_traj = 10
     predict_ahead = 30
-    encoder = AutoregressiveLSTM(hidden_size=20, predict_ahead=predict_ahead).to(device)
+    hidden_size = config['hidden_size']
+    lr = config['learning_rate']
+    encoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=predict_ahead).to(device)
     # encoder.load_state_dict(torch.load("./ckpts/model_10000.pt"))
-    optimizer = optim.Adam(encoder.parameters(), lr=1e-3)
+    optimizer = optim.Adam(encoder.parameters(), lr=lr)
 
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
     loss_fn_contrastive = InfoNCE()
@@ -177,10 +217,19 @@ def train_contrastive():
             print("Contrastive Loss: {}".format(total_loss_contrastive / len(dataloader)))
             # print("Sample 1: {}".format(sample1[:2]))
             # print("Sample 2: {}".format(sample2[:2]))
+
+            # Log metrics to wandb
+            if log_to_wandb:
+                wandb.log({"epoch": epoch, "total_loss": total_loss, "predictive_loss": total_loss_predictive,
+                        "contrastive_loss": total_loss_contrastive})
         
         # Save model
         if (epoch+1) % 1000 == 0:
-            torch.save(encoder.state_dict(), f"./ckpts/model_{epoch+1}.pt")
+            model_path = f"./ckpts/model_{epoch+1}.pt"
+            if log_to_wandb:
+                wandb.save(model_path)  # Save model checkpoints to wandb
+            else: 
+                torch.save(encoder.state_dict(), model_path)
 
 
 def train_linear(ckpt_path="./ckpts/model_10000.pt", verbose=False):
@@ -318,10 +367,40 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
     return linear_layer
 
 
+def vae_hyperparam_search():
+    sweep_config = {
+        'method': 'bayes', 
+        'metric': {'name': 'total_loss', 'goal': 'minimize'},
+        'parameters': {
+            'learning_rate': {'distribution': 'log_uniform', 'min': -10, 'max': -4},
+            'hidden_size': {'values': [20, 40, 60]},
+            'lambda_kl': {'values': [0.05, 0.1]},
+            'lambda_contrastive': {'values': [0.1, 1]}}
+        }
+    sweep_id = wandb.sweep(sweep_config, project="vae_autoencoder", entity="contrastive-time-series")
+    wandb.agent(sweep_id, train_vae_contrastive)
+    
+
+def lstm_hyperparam_search():
+    sweep_config = {
+        'method': 'bayes', 
+        'metric': {'name': 'total_loss', 'goal': 'minimize'},
+        'parameters': {
+            'learning_rate': {'distribution': 'log_uniform', 'min': -12, 'max': -6},
+            'hidden_size': {'values': [20, 40, 60]}}
+        }
+    sweep_id = wandb.sweep(sweep_config, project="lstm_autoregressive", entity="contrastive-time-series")
+    wandb.agent(sweep_id, train_contrastive)
+    
 if __name__ == "__main__":
     # # Train
-    train_contrastive()
-    # train_vae_contrastive()
+    train_contrastive(default_config)    
+    # train_vae_contrastive(default_config)
+    
+    # # Sweep
+    # lstm_hyperparam_search()
+    # vae_hyperparam_search()
+    
 
     # Evaluat on a single checkpoint
     # opt_linear("./ckpts/model_100000.pt")
