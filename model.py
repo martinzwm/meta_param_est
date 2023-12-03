@@ -125,7 +125,7 @@ class VAEAutoencoder(nn.Module):
         # Decoding
         x = x[:, 0, :].unsqueeze(1).repeat(1, seq_len, 1) # use the first timestep of x, i.e. x_0, as input to decoder
         recon_x, _ = self.decoder(x, z)
-        return recon_x.squeeze(1), encoder_out, mu, logvar, c_t
+        return recon_x.squeeze(1), encoder_out, mu, logvar, z
 
 
 class TestModel:

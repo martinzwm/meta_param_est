@@ -92,7 +92,7 @@ def train_vae_contrastive(config=None):
             data = trajectories.view(-1, time_size, state_size)
             input = data[:, :-1, :]
             target = data[:, 1:, :]
-            recon_x, encoder_out, mu, logvar, c_t = vae(input)
+            recon_x, encoder_out, mu, logvar, latent = vae(input)
 
             # Reconstruction Loss
             loss_recon = loss_fn_reconstruct(recon_x, target)
@@ -109,7 +109,7 @@ def train_vae_contrastive(config=None):
             loss_kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     
             # Contrastive Loss
-            hidden_vecs = c_t.squeeze(0)
+            hidden_vecs = latent.squeeze(0)
             hidden_vecs = hidden_vecs.view(batch_size, sample_size, -1)
             
             loss_contrastive_list = []
@@ -408,7 +408,7 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
 
 def vae_hyperparam_search():
     sweep_config = {
-        'method': 'bayes', 
+        'method': 'random', 
         'metric': {'name': 'total_loss', 'goal': 'minimize'},
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
@@ -426,7 +426,7 @@ def vae_hyperparam_search():
 
 def lstm_hyperparam_search():
     sweep_config = {
-        'method': 'bayes', 
+        'method': 'random', 
         'metric': {'name': 'total_loss', 'goal': 'minimize'},
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
@@ -442,11 +442,11 @@ def lstm_hyperparam_search():
 if __name__ == "__main__":
     # Train
     # train_contrastive(default_config)    
-    train_vae_contrastive(default_config)
+    # train_vae_contrastive(default_config)
     
     # # Sweep
     # lstm_hyperparam_search()
-    # vae_hyperparam_search()
+    vae_hyperparam_search()
     
 
     # # Evaluat on a single checkpoint
