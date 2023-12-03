@@ -416,7 +416,7 @@ def vae_hyperparam_search():
             'hidden_size': {'values': [10, 100, 200]},
             'lambda_kl': {'values': [0.05, 0.1]},
             'lambda_contrastive': {'values': [0.1, 1]},
-            'lambda_pred': {'valeus': [0.1, 1]},
+            'lambda_pred': {'values': [0.1, 1]},
             'predict_ahead': {'values': [1]},
         }
     }
