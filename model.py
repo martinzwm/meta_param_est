@@ -114,7 +114,7 @@ class VAEAutoencoder(nn.Module):
         _, seq_len, _ = x.shape
         
         # Encoding
-        _, c_t = self.encoder(x)
+        encoder_out, c_t = self.encoder(x)
         c_t = self.encoder.get_embedding(c_t)
         mu = self.mu(c_t)
         logvar = self.logvar(c_t)
@@ -125,7 +125,7 @@ class VAEAutoencoder(nn.Module):
         # Decoding
         x = x[:, 0, :].unsqueeze(1).repeat(1, seq_len, 1) # use the first timestep of x, i.e. x_0, as input to decoder
         recon_x, _ = self.decoder(x, z)
-        return recon_x.squeeze(1), mu, logvar, c_t
+        return recon_x.squeeze(1), encoder_out, mu, logvar, c_t
 
 
 class TestModel:

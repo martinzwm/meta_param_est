@@ -34,6 +34,7 @@ default_config = {
     'hidden_size': 100,
     'lambda_kl': 0.1,
     'lambda_contrastive': 0.1,
+    'lambda_pred': 1
 }
     
 def train_vae_contrastive(config=None):
@@ -54,6 +55,7 @@ def train_vae_contrastive(config=None):
     num_epochs = config['num_epochs']
     lambda_kl = config['lambda_kl']
     lambda_contrastive = config['lambda_contrastive']
+    lambda_pred = config['lambda_pred']
 
     # Load model
     encoder = AutoregressiveLSTM(
@@ -62,15 +64,16 @@ def train_vae_contrastive(config=None):
     ).to(device)
     decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
     vae = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
-    optimizer = optim.Adam(encoder.parameters(), lr=lr)
+    optimizer = optim.Adam(vae.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
     
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=8)
     loss_fn_contrastive = InfoNCE()
+    loss_fn_predictive = nn.MSELoss()
     loss_fn_reconstruct = nn.MSELoss()
 
     for epoch in tqdm.tqdm(range(num_epochs)):
-        total_loss, total_loss_kl, total_loss_recon, total_loss_contrastive = 0.0, 0.0, 0.0, 0.0
+        total_loss, total_loss_kl, total_loss_recon, total_loss_pred, total_loss_contrastive = 0.0, 0.0, 0.0, 0.0, 0.0
         
         for i, (W, times, trajectories) in enumerate(dataloader):
             optimizer.zero_grad()
@@ -86,28 +89,45 @@ def train_vae_contrastive(config=None):
             data = torch.concat((sample1, sample2), dim=0)
             
             # Run VAE
+            data = trajectories.view(-1, time_size, state_size)
             input = data[:, :-1, :]
             target = data[:, 1:, :]
-            recon_x, mu, logvar, c_t = vae(input)
-            
+            recon_x, encoder_out, mu, logvar, c_t = vae(input)
+
             # Reconstruction Loss
             loss_recon = loss_fn_reconstruct(recon_x, target)
+            
+            # Encoder predictive Loss
+            predictions_auto = encoder_out
+            targets_auto = torch.zeros(batch_size * sample_size, time_size - predict_ahead, predict_ahead, state_size).to(device)
+            for i in range(predict_ahead):
+                targets_auto[:, :, i, :] = target[:, i:time_size-predict_ahead+i, :]
+                
+            loss_pred = loss_fn_predictive(predictions_auto, targets_auto)
 
             # KL Divergence Loss
             loss_kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     
             # Contrastive Loss
             hidden_vecs = c_t.squeeze(0)
-            sample1 = hidden_vecs[:batch_size, :]
-            sample2 = hidden_vecs[batch_size:, :]
-
-            sample1 = F.normalize(sample1, p=2, dim=1)
-            sample2 = F.normalize(sample2, p=2, dim=1)
+            hidden_vecs = hidden_vecs.view(batch_size, sample_size, -1)
             
-            loss_contrastive = loss_fn_contrastive(sample1, sample2)
+            loss_contrastive_list = []
+            for i in range(10):
+                indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
+                sample1 = hidden_vecs[torch.arange(batch_size), indices[:, 0], :]
+                sample2 = hidden_vecs[torch.arange(batch_size), indices[:, 1], :]
+
+                # Force top k dimension to be corresponds to parameters
+                sample1 = sample1[:, :10]
+                sample2 = sample2[:, :10]
+                sample1 = sample1 / torch.norm(sample1, dim=1, keepdim=True)
+                sample2 = sample2 / torch.norm(sample2, dim=1, keepdim=True)
+                loss_contrastive_list.append(loss_fn_contrastive(sample1, sample2))
+            loss_contrastive = torch.mean(torch.stack(loss_contrastive_list))
             
             # Total loss
-            loss = loss_recon + lambda_kl * loss_kl + lambda_contrastive * loss_contrastive
+            loss = loss_recon + lambda_pred * loss_pred + lambda_kl * loss_kl + lambda_contrastive * loss_contrastive
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -115,6 +135,7 @@ def train_vae_contrastive(config=None):
             # Logging
             total_loss += loss.item()
             total_loss_recon += loss_recon.item()
+            total_loss_pred += loss_pred.item()
             total_loss_kl += loss_kl.item()
             total_loss_contrastive += loss_contrastive.item()
         
@@ -122,22 +143,21 @@ def train_vae_contrastive(config=None):
         if epoch % 100 == 0:
             print("Epoch: {}, Loss: {}".format(epoch, total_loss / len(dataloader)))
             print("Reconstruction Loss: {}".format(total_loss_recon / len(dataloader)))
+            print("Encoder predictive Loss: {}".format(total_loss_pred / len(dataloader)))
             print("KL Divergence: {}".format(total_loss_kl / len(dataloader)))
             print("Contrastive Loss: {}".format(total_loss_contrastive / len(dataloader)))
             
             # Log metrics to wandb
             if log_to_wandb:
                 wandb.log({"epoch": epoch, "total_loss": total_loss, "recon_loss": total_loss_recon,
-                        "kl_loss": total_loss_kl, "contrastive_loss": total_loss_contrastive})
+                        "predictive_loss": total_loss_pred, "kl_loss": total_loss_kl, "contrastive_loss": total_loss_contrastive})
         
         # Save model
         if (epoch+1) % 1000 == 0:
             model_path = f"./ckpts/vae_model_{epoch+1}.pt"
-            
+            torch.save(encoder.state_dict(), model_path)
             if log_to_wandb:
                 wandb.save(model_path)  # Save model checkpoints to wandb
-            else: 
-                torch.save(vae.state_dict(), model_path)
             
 
 def train_contrastive(config=None):
@@ -396,6 +416,7 @@ def vae_hyperparam_search():
             'hidden_size': {'values': [10, 100, 200]},
             'lambda_kl': {'values': [0.05, 0.1]},
             'lambda_contrastive': {'values': [0.1, 1]},
+            'lambda_pred': {'valeus': [0.1, 1]},
             'predict_ahead': {'values': [1]},
         }
     }
@@ -420,8 +441,8 @@ def lstm_hyperparam_search():
 
 if __name__ == "__main__":
     # Train
-    train_contrastive(default_config)    
-    # train_vae_contrastive(default_config)
+    # train_contrastive(default_config)    
+    train_vae_contrastive(default_config)
     
     # # Sweep
     # lstm_hyperparam_search()
