@@ -29,7 +29,7 @@ if torch.cuda.is_available():
 # default config if no sweep
 default_config = {
     'learning_rate': 1e-2,
-    'num_epochs': 5000,
+    'num_epochs': 2000,
     'predict_ahead': 1, # 1 for autoregressive, 99 for VAE
     'hidden_size': 100,
     'lambda_kl': 0.1,
@@ -63,7 +63,7 @@ def train_vae_contrastive(config=None):
     decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
     vae = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
     optimizer = optim.Adam(encoder.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10000, T_mult=1, eta_min=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
     
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=8)
     loss_fn_contrastive = InfoNCE()
@@ -166,7 +166,7 @@ def train_contrastive(config=None):
     ).to(device)
     # encoder.load_state_dict(torch.load("./ckpts/model_10000.pt"))
     optimizer = optim.Adam(encoder.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10000, T_mult=1, eta_min=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
 
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=8)
     loss_fn_contrastive = InfoNCE()
@@ -243,10 +243,9 @@ def train_contrastive(config=None):
         # Save model
         if (epoch+1) % 1000 == 0:
             model_path = f"./ckpts/model_{epoch+1}.pt"
+            torch.save(encoder.state_dict(), model_path)
             if log_to_wandb:
                 wandb.save(model_path)  # Save model checkpoints to wandb
-            else: 
-                torch.save(encoder.state_dict(), model_path)
 
 
 def train_linear(ckpt_path="./ckpts/model_10000.pt", verbose=False):
@@ -350,15 +349,15 @@ def solve(X, Y):
     return linear_layer.numpy()
 
 
-def opt_linear(ckpt_path, model_type='AutoregressiveLSTM'):
+def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
     """
     Evaluate the model on the validation set.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
 
-    hidden_size=100
-    predict_ahead=1
+    hidden_size = params["hidden_size"] if params is not None else 100
+    predict_ahead = params["predict_ahead"] if params is not None else 1
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
         predict_ahead=predict_ahead
@@ -393,7 +392,7 @@ def vae_hyperparam_search():
         'metric': {'name': 'total_loss', 'goal': 'minimize'},
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
-            'num_epochs': {'values': [5000]},
+            'num_epochs': {'values': [2000]},
             'hidden_size': {'values': [10, 100, 200]},
             'lambda_kl': {'values': [0.05, 0.1]},
             'lambda_contrastive': {'values': [0.1, 1]},
@@ -410,7 +409,7 @@ def lstm_hyperparam_search():
         'metric': {'name': 'total_loss', 'goal': 'minimize'},
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
-            'num_epochs': {'values': [5000]},
+            'num_epochs': {'values': [2000]},
             'hidden_size': {'values': [10, 100, 200]},
             'predict_ahead': {'values': [1, 10, 30]},
         }
@@ -420,13 +419,13 @@ def lstm_hyperparam_search():
     
 
 if __name__ == "__main__":
-    # # Train
-    # train_contrastive(default_config)    
+    # Train
+    train_contrastive(default_config)    
     # train_vae_contrastive(default_config)
     
-    # Sweep
-    lstm_hyperparam_search()
-    vae_hyperparam_search()
+    # # Sweep
+    # lstm_hyperparam_search()
+    # vae_hyperparam_search()
     
 
     # # Evaluat on a single checkpoint
