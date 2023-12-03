@@ -22,16 +22,16 @@ if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = False
 
 
-def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'):
+def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM', params=None):
     """Evaluate the model on the validation set."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataloader = get_dataloader(batch_size=32, data_path="val_data.pickle", num_workers=4)
     
-    linear_layer = opt_linear(ckpt_path, model_type)
+    linear_layer = opt_linear(ckpt_path, model_type, params)
     linear_layer = torch.from_numpy(linear_layer).to(device)
 
-    predict_ahead = 1
-    hidden_size = 100
+    hidden_size = params["hidden_size"] if params is not None else 100
+    predict_ahead = params["predict_ahead"] if params is not None else 1
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
         predict_ahead=predict_ahead
@@ -205,7 +205,7 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
 
 if __name__ == "__main__":
     # Evaluate parameters
-    evaluate("./ckpts/model_10000.pt", 'AutoregressiveLSTM')
+    evaluate("./ckpts/model_2000.pt", 'AutoregressiveLSTM', {"hidden_size": 100, "predict_ahead": 1})
     # evaluate("./ckpts/vae_model_10000.pt", 'VAEAutoencoder')
     
     # Trajectories
