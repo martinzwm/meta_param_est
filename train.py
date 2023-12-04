@@ -32,9 +32,9 @@ default_config = {
     'num_epochs': 2000,
     'predict_ahead': 1, # 1 for autoregressive, 99 for VAE
     'hidden_size': 100,
-    'lambda_kl': 0.1,
-    'lambda_contrastive': 0.1,
-    'lambda_pred': 1,
+    'lambda_kl': 0.0,
+    'lambda_contrastive': 1,
+    'lambda_pred': 0.0,
     'is_vae': False,
 }
     
@@ -58,6 +58,7 @@ def train_vae_contrastive(config=None):
     lambda_contrastive = config['lambda_contrastive']
     lambda_pred = config['lambda_pred']
     is_vae = config['is_vae']
+    is_contrastive = config['lambda_contrastive'] > 0.0
 
     # Load model
     encoder = AutoregressiveLSTM(
@@ -114,22 +115,25 @@ def train_vae_contrastive(config=None):
                 loss_kl = torch.tensor(0.0)
     
             # Contrastive Loss
-            hidden_vecs = latent.squeeze(0)
-            hidden_vecs = hidden_vecs.view(batch_size, sample_size, -1)
-            
-            loss_contrastive_list = []
-            for i in range(10):
-                indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
-                sample1 = hidden_vecs[torch.arange(batch_size), indices[:, 0], :]
-                sample2 = hidden_vecs[torch.arange(batch_size), indices[:, 1], :]
+            if is_contrastive:
+                hidden_vecs = latent.squeeze(0)
+                hidden_vecs = hidden_vecs.view(batch_size, sample_size, -1)
+                
+                loss_contrastive_list = []
+                for i in range(10):
+                    indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
+                    sample1 = hidden_vecs[torch.arange(batch_size), indices[:, 0], :]
+                    sample2 = hidden_vecs[torch.arange(batch_size), indices[:, 1], :]
 
-                # Force top k dimension to be corresponds to parameters
-                sample1 = sample1[:, :10]
-                sample2 = sample2[:, :10]
-                sample1 = sample1 / torch.norm(sample1, dim=1, keepdim=True)
-                sample2 = sample2 / torch.norm(sample2, dim=1, keepdim=True)
-                loss_contrastive_list.append(loss_fn_contrastive(sample1, sample2))
-            loss_contrastive = torch.mean(torch.stack(loss_contrastive_list))
+                    # Force top k dimension to be corresponds to parameters
+                    sample1 = sample1[:, :10]
+                    sample2 = sample2[:, :10]
+                    sample1 = sample1 / torch.norm(sample1, dim=1, keepdim=True)
+                    sample2 = sample2 / torch.norm(sample2, dim=1, keepdim=True)
+                    loss_contrastive_list.append(loss_fn_contrastive(sample1, sample2))
+                loss_contrastive = torch.mean(torch.stack(loss_contrastive_list))
+            else:
+                loss_contrastive = torch.tensor(0.0)
             
             # Total loss
             loss = loss_recon + lambda_pred * loss_pred + lambda_kl * loss_kl + lambda_contrastive * loss_contrastive
@@ -160,7 +164,7 @@ def train_vae_contrastive(config=None):
         # Save model
         if (epoch+1) % 1000 == 0:
             model_path = f"./ckpts/vae_model_{epoch+1}.pt"
-            torch.save(encoder.state_dict(), model_path)
+            torch.save(vae.state_dict(), model_path)
             if log_to_wandb:
                 wandb.save(model_path)  # Save model checkpoints to wandb
             
@@ -383,6 +387,7 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
 
     hidden_size = params["hidden_size"] if params is not None else 100
     predict_ahead = params["predict_ahead"] if params is not None else 1
+    is_vae = params["is_vae"] if params is not None else False
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
         predict_ahead=predict_ahead
@@ -393,7 +398,7 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
         model = encoder
     elif model_type == 'VAEAutoencoder':
         decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
-        model = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
+        model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae).to(device)
           
     model.load_state_dict(torch.load(ckpt_path, map_location = device))
     model.eval()
@@ -448,11 +453,11 @@ def lstm_hyperparam_search():
 if __name__ == "__main__":
     # Train
     # train_contrastive(default_config)    
-    # train_vae_contrastive(default_config)
+    train_vae_contrastive(default_config)
     
     # # Sweep
     # lstm_hyperparam_search()
-    vae_hyperparam_search()
+    # vae_hyperparam_search()
     
 
     # # Evaluat on a single checkpoint

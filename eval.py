@@ -32,6 +32,7 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
 
     hidden_size = params["hidden_size"] if params is not None else 100
     predict_ahead = params["predict_ahead"] if params is not None else 1
+    is_vae = params["is_vae"] if params is not None else False
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
         predict_ahead=predict_ahead
@@ -42,7 +43,7 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
         model = encoder
     elif model_type == 'VAEAutoencoder':
         decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
-        model = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
+        model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae).to(device)
     
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
@@ -214,7 +215,7 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
 if __name__ == "__main__":
     # Evaluate parameters
     # evaluate("./ckpts/framework1_best.pt", 'AutoregressiveLSTM', {"hidden_size": 100, "predict_ahead": 1})
-    evaluate("./ckpts/vae_model_2000.pt", 'VAEAutoencoder')
+    evaluate("./ckpts/vae_model_2000.pt", 'VAEAutoencoder', {"hidden_size": 100, "predict_ahead": 1, "is_vae": False})
     
     # Trajectories
     # visualize_trajectory("./ckpts/model_5000.pt", 100, 'AutoregressiveLSTM')
