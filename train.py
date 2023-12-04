@@ -28,13 +28,13 @@ if torch.cuda.is_available():
     
 # default config if no sweep
 default_config = {
-    'learning_rate': 1e-2,
+    'learning_rate': 1e-3,
     'num_epochs': 2000,
     'predict_ahead': 1, # 1 for autoregressive, 99 for VAE
     'hidden_size': 100,
-    'lambda_kl': 0.0,
-    'lambda_contrastive': 1,
-    'lambda_pred': 0.0,
+    'lambda_kl': 0,
+    'lambda_contrastive': 0,
+    'lambda_pred': 1.0,
     'is_vae': False,
 }
     
@@ -387,7 +387,6 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
 
     hidden_size = params["hidden_size"] if params is not None else 100
     predict_ahead = params["predict_ahead"] if params is not None else 1
-    is_vae = params["is_vae"] if params is not None else False
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
         predict_ahead=predict_ahead
@@ -397,6 +396,7 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
     if model_type == 'AutoregressiveLSTM':
         model = encoder
     elif model_type == 'VAEAutoencoder':
+        is_vae = params["is_vae"] if params is not None else False
         decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
         model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae).to(device)
           
