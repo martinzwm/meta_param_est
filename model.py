@@ -111,7 +111,7 @@ class VAEAutoencoder(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps*std
 
-    def forward(self, x):
+    def forward(self, x, out_len=None):
         _, seq_len, _ = x.shape
         
         # Encoding
@@ -127,6 +127,8 @@ class VAEAutoencoder(nn.Module):
             z = c_t
         
         # Decoding
+        if out_len is not None:
+            seq_len = out_len
         x = x[:, 0, :].unsqueeze(1).repeat(1, seq_len, 1) # use the first timestep of x, i.e. x_0, as input to decoder
         recon_x, _ = self.decoder(x, z)
         return recon_x.squeeze(1), encoder_out, mu, logvar, z
