@@ -97,13 +97,14 @@ class AutoregressiveLSTM(nn.Module):
 
 class VAEAutoencoder(nn.Module):
     """VAE Autoencoder for reconstructing time series with a variational latent space and optional contrastive loss capability."""
-    def __init__(self, encoder, decoder, hidden_size=10):
+    def __init__(self, encoder, decoder, hidden_size=10, is_vae=True):
         super(VAEAutoencoder, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
 
         self.mu = nn.Linear(encoder.hidden_size, hidden_size)
         self.logvar = nn.Linear(encoder.hidden_size, hidden_size)
+        self.is_vae = is_vae
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5*logvar)
@@ -116,11 +117,14 @@ class VAEAutoencoder(nn.Module):
         # Encoding
         encoder_out, c_t = self.encoder(x)
         c_t = self.encoder.get_embedding(c_t)
+        
+        # Reparameterization
         mu = self.mu(c_t)
         logvar = self.logvar(c_t)
-
-        # Reparameterization
-        z = self.reparameterize(mu, logvar)
+        if self.is_vae:
+            z = self.reparameterize(mu, logvar)
+        else:
+            z = c_t
         
         # Decoding
         x = x[:, 0, :].unsqueeze(1).repeat(1, seq_len, 1) # use the first timestep of x, i.e. x_0, as input to decoder

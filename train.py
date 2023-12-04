@@ -34,7 +34,8 @@ default_config = {
     'hidden_size': 100,
     'lambda_kl': 0.1,
     'lambda_contrastive': 0.1,
-    'lambda_pred': 1
+    'lambda_pred': 1,
+    'is_vae': False,
 }
     
 def train_vae_contrastive(config=None):
@@ -56,6 +57,7 @@ def train_vae_contrastive(config=None):
     lambda_kl = config['lambda_kl']
     lambda_contrastive = config['lambda_contrastive']
     lambda_pred = config['lambda_pred']
+    is_vae = config['is_vae']
 
     # Load model
     encoder = AutoregressiveLSTM(
@@ -63,7 +65,7 @@ def train_vae_contrastive(config=None):
         predict_ahead=predict_ahead
     ).to(device)
     decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
-    vae = VAEAutoencoder(encoder, decoder, hidden_size).to(device)
+    vae = VAEAutoencoder(encoder, decoder, hidden_size, is_vae).to(device)
     optimizer = optim.Adam(vae.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
     
@@ -106,7 +108,10 @@ def train_vae_contrastive(config=None):
             loss_pred = loss_fn_predictive(predictions_auto, targets_auto)
 
             # KL Divergence Loss
-            loss_kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            if is_vae:
+                loss_kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            else:
+                loss_kl = torch.tensor(0.0)
     
             # Contrastive Loss
             hidden_vecs = latent.squeeze(0)
@@ -413,15 +418,16 @@ def vae_hyperparam_search():
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
             'num_epochs': {'values': [2000]},
-            'hidden_size': {'values': [10, 100, 200]},
-            'lambda_kl': {'values': [0.05, 0.1]},
-            'lambda_contrastive': {'values': [0.1, 1]},
-            'lambda_pred': {'values': [0.1, 1]},
-            'predict_ahead': {'values': [1]},
+            'hidden_size': {'values': [50, 100]},
+            'lambda_kl': {'values': [1]},
+            'lambda_contrastive': {'values': [1]},
+            'lambda_pred': {'values': [0, 1]},
+            'predict_ahead': {'values': [1, 10, 20]},
+            'is_vae': {'values': [False, True]},
         }
     }
     sweep_id = wandb.sweep(sweep_config, project="vae_autoencoder", entity="contrastive-time-series")
-    wandb.agent(sweep_id, train_vae_contrastive, count=5)
+    wandb.agent(sweep_id, train_vae_contrastive, count=20)
     
 
 def lstm_hyperparam_search():
