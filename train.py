@@ -12,6 +12,7 @@ from info_nce import InfoNCE
 
 from model import TrajectoryLSTM, AutoregressiveLSTM, VAEAutoencoder
 from dynamics import get_dataloader
+from eval import evaluate
 
 # seed
 seed_value = 42
@@ -28,14 +29,16 @@ if torch.cuda.is_available():
     
 # default config if no sweep
 default_config = {
-    'learning_rate': 1e-3,
+    'learning_rate': 1e-2,
     'num_epochs': 2000,
     'predict_ahead': 1, # 1 for autoregressive, 99 for VAE
     'hidden_size': 100,
     'lambda_kl': 0,
-    'lambda_contrastive': 0,
+    'lambda_contrastive': 0.0,
     'lambda_pred': 1.0,
     'is_vae': False,
+    'bottleneck_size': 20,
+    'num_layers': 8,
 }
     
 def train_vae_contrastive(config=None):
@@ -59,14 +62,17 @@ def train_vae_contrastive(config=None):
     lambda_pred = config['lambda_pred']
     is_vae = config['is_vae']
     is_contrastive = config['lambda_contrastive'] > 0.0
+    bottleneck_size = config['bottleneck_size']
+    num_layers = config['num_layers']
 
     # Load model
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
-        predict_ahead=predict_ahead
+        predict_ahead=predict_ahead,
+        num_layers=num_layers,
     ).to(device)
-    decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
-    vae = VAEAutoencoder(encoder, decoder, hidden_size, is_vae).to(device)
+    decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, num_layers=num_layers, is_decoder=True).to(device)
+    vae = VAEAutoencoder(encoder, decoder, hidden_size, is_vae, bottleneck_size).to(device)
     optimizer = optim.Adam(vae.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
     
@@ -84,12 +90,6 @@ def train_vae_contrastive(config=None):
             # Get data
             trajectories = trajectories.to(device)
             batch_size, sample_size, time_size, state_size = trajectories.shape # batch_size = # of param. sets
-            
-            # Sample 2 trajectories from each set of parameters for contrastive learning
-            indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
-            sample1 = trajectories[torch.arange(batch_size), indices[:, 0]] # batch_size x seq_len x state_size
-            sample2 = trajectories[torch.arange(batch_size), indices[:, 1]]
-            data = torch.concat((sample1, sample2), dim=0)
             
             # Run VAE
             data = trajectories.view(-1, time_size, state_size)
@@ -161,13 +161,20 @@ def train_vae_contrastive(config=None):
                 wandb.log({"epoch": epoch, "total_loss": total_loss, "recon_loss": total_loss_recon,
                         "predictive_loss": total_loss_pred, "kl_loss": total_loss_kl, "contrastive_loss": total_loss_contrastive})
         
-        # Save model
+        # Save model and evaluate
         if (epoch+1) % 1000 == 0:
+            # Save
             model_path = f"./ckpts/vae_model_{epoch+1}.pt"
             torch.save(vae.state_dict(), model_path)
+            # Evaluate
+            params = {"hidden_size": hidden_size, "predict_ahead": predict_ahead, "is_vae": is_vae, "bottleneck_size": bottleneck_size, "num_layers": num_layers}
+            param_mae = evaluate(ckpt_path=model_path, model_type='VAEAutoencoder', params=params)
+            print("MAE (params) on the training set: ", param_mae)
+            # Log
             if log_to_wandb:
                 wandb.save(model_path)  # Save model checkpoints to wandb
-            
+                wandb.log({"param_mae": param_mae})
+
 
 def train_contrastive(config=None):
     # Initialize wandb if config is not None
@@ -336,86 +343,6 @@ def train_linear(ckpt_path="./ckpts/model_10000.pt", verbose=False):
     print("MAE (params) on the training set: ", mae)
 
 
-def get_hidden_vectors_and_params(model, dataloader, device, model_type="AutoregressiveLSTM"):
-    """
-    Extract hidden vectors (a column of ones is added as bias) and ground truth parameters for a given model.
-    """
-    y, y_hat = [], []
-    for _, (W, _, trajectories) in enumerate(dataloader):        
-        trajectories = trajectories.to(device)
-        batch_size, sample_size, time_size, state_size = trajectories.shape
-
-        # Run model
-        data = trajectories.view(-1, time_size, state_size)
-        input = data[:, :-1, :]
-
-        with torch.no_grad():
-            model_outputs = model(input)
-            hidden_vecs = model_outputs[-1] # the last entry is the hidden_vecs
-            if model_type == "AutoregressiveLSTM":
-                hidden_vecs = model.get_embedding(hidden_vecs)
-
-        # Reshape and store hidden vectors and ground truth parameters
-        hidden_vecs = hidden_vecs.view(batch_size * sample_size, -1)
-        W = W[:, 2:].repeat_interleave(sample_size, dim=0)
-
-        y_hat.append(hidden_vecs)
-        y.append(W)
-    
-    # Add columns of ones for bias term
-    hidden_vecs = torch.cat(y_hat, dim=0).cpu()
-    ones = torch.ones(hidden_vecs.shape[0], 1)
-    hidden_vecs_with_bias = torch.cat((hidden_vecs, ones), dim=1).cpu()
-    gt_params = torch.cat(y, dim=0).cpu()
-
-    return hidden_vecs_with_bias, gt_params
-
-def solve(X, Y):
-    """
-    Optimize a linear layer to map hidden vectors to parameters.
-    """
-    linear_layer = torch.linalg.lstsq(X, Y).solution
-    return linear_layer.numpy()
-
-
-def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
-    """
-    Evaluate the model on the validation set.
-    """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
-
-    hidden_size = params["hidden_size"] if params is not None else 100
-    predict_ahead = params["predict_ahead"] if params is not None else 1
-    encoder = AutoregressiveLSTM(
-        hidden_size=hidden_size, 
-        predict_ahead=predict_ahead
-    ).to(device)
-
-    # Load the model
-    if model_type == 'AutoregressiveLSTM':
-        model = encoder
-    elif model_type == 'VAEAutoencoder':
-        is_vae = params["is_vae"] if params is not None else False
-        decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
-        model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae).to(device)
-          
-    model.load_state_dict(torch.load(ckpt_path, map_location = device))
-    model.eval()
-
-    # Extract hidden vectors and parameters
-    hidden_vecs, gt_params = get_hidden_vectors_and_params(model, dataloader, device, model_type) # hidden_vecs here has bias column
-
-    # Solve for the linear system
-    linear_layer = solve(hidden_vecs, gt_params)
-
-    # Evaluate using the linear_layer
-    pred_params = np.matmul(hidden_vecs, linear_layer).numpy()
-    mae = np.mean(np.abs(pred_params - gt_params.numpy()), axis=0)
-    print("MAE (params) on the training set: ", mae)
-    return linear_layer
-
-
 def vae_hyperparam_search():
     sweep_config = {
         'method': 'random', 
@@ -423,12 +350,15 @@ def vae_hyperparam_search():
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
             'num_epochs': {'values': [2000]},
-            'hidden_size': {'values': [50, 100]},
-            'lambda_kl': {'values': [1]},
-            'lambda_contrastive': {'values': [1]},
-            'lambda_pred': {'values': [0, 1]},
-            'predict_ahead': {'values': [1, 10, 20]},
-            'is_vae': {'values': [False, True]},
+            'hidden_size': {'values': [10, 50, 100, 150]},
+            'lambda_kl': {'values': [0]},
+            'lambda_contrastive': {'values': [0]},
+            'lambda_pred': {'values': [1]},
+            'predict_ahead': {'values': [1]},
+            'is_vae': {'values': [False]},
+            'framework': {'values': [4]},
+            'bottleneck_size': {'values': [-1, 2, 10, 20]},
+            'num_layers': {'values': [2, 4, 8]},
         }
     }
     sweep_id = wandb.sweep(sweep_config, project="vae_autoencoder", entity="contrastive-time-series")
@@ -442,8 +372,8 @@ def lstm_hyperparam_search():
         'parameters': {
             'learning_rate': {'distribution': 'log_uniform', 'min': int(np.floor(np.log(1e-3))), 'max': int(np.floor(np.log(1e-1)))},
             'num_epochs': {'values': [2000]},
-            'hidden_size': {'values': [10, 100, 200]},
-            'predict_ahead': {'values': [1, 10, 30]},
+            'hidden_size': {'values': [10, 50, 100, 150]},
+            'predict_ahead': {'values': [1, 10, 20]},
         }
     }
     sweep_id = wandb.sweep(sweep_config, project="lstm_autoregressive", entity="contrastive-time-series")
@@ -453,16 +383,11 @@ def lstm_hyperparam_search():
 if __name__ == "__main__":
     # Train
     # train_contrastive(default_config)    
-    train_vae_contrastive(default_config)
+    # train_vae_contrastive(default_config)
     
     # # Sweep
     # lstm_hyperparam_search()
-    # vae_hyperparam_search()
-    
-
-    # # Evaluat on a single checkpoint
-    # opt_linear("./ckpts/model_4000.pt")
-    # opt_linear("./ckpts/vae_model_1000.pt", 'VAEAutoencoder')
+    vae_hyperparam_search()
 
     # # Evaluate on training set
     # for epoch in range(1000, 60001, 1000):

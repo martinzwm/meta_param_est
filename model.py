@@ -97,7 +97,7 @@ class AutoregressiveLSTM(nn.Module):
 
 class VAEAutoencoder(nn.Module):
     """VAE Autoencoder for reconstructing time series with a variational latent space and optional contrastive loss capability."""
-    def __init__(self, encoder, decoder, hidden_size=10, is_vae=True):
+    def __init__(self, encoder, decoder, hidden_size=10, is_vae=True, bottleneck_size=-1):
         super(VAEAutoencoder, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
@@ -105,6 +105,11 @@ class VAEAutoencoder(nn.Module):
         self.mu = nn.Linear(encoder.hidden_size, hidden_size)
         self.logvar = nn.Linear(encoder.hidden_size, hidden_size)
         self.is_vae = is_vae
+
+        self.bottleneck_size = bottleneck_size
+        if self.bottleneck_size > 0.0:
+            self.linear_down = nn.Linear(hidden_size, bottleneck_size)
+            self.linear_up = nn.Linear(bottleneck_size, hidden_size)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5*logvar)
@@ -125,13 +130,24 @@ class VAEAutoencoder(nn.Module):
             z = self.reparameterize(mu, logvar)
         else:
             z = c_t
+
+        # Bottleneck
+        bottleneck = None
+        if self.bottleneck_size > 0.0:
+            z = self.linear_down(z)
+            bottleneck = z
+            z = self.linear_up(z)
         
         # Decoding
         if out_len is not None:
             seq_len = out_len
         x = x[:, 0, :].unsqueeze(1).repeat(1, seq_len, 1) # use the first timestep of x, i.e. x_0, as input to decoder
         recon_x, _ = self.decoder(x, z)
-        return recon_x.squeeze(1), encoder_out, mu, logvar, z
+
+        if self.bottleneck_size > 0.0:
+            return recon_x.squeeze(1), encoder_out, mu, logvar, bottleneck
+        else:
+            return recon_x.squeeze(1), encoder_out, mu, logvar, z
 
 
 class TestModel:
