@@ -177,8 +177,8 @@ class TestDynamics:
             axs[0].set_title("k1 = {}, k2 = {}, m1 = {}, m2 = {}".format(*W.tolist()))
 
             # Velocity subplot
-            axs[1].plot(times, trajectory[:, 2], label="x1_dot (m1 velocity)")
-            axs[1].plot(times, trajectory[:, 3], label="x2_dot (m2 velocity)")
+            axs[1].plot(times, trajectory[:, 2], label="v1 (m1 velocity)")
+            axs[1].plot(times, trajectory[:, 3], label="v2 (m2 velocity)")
             axs[1].set_xlabel("Time")
             axs[1].set_ylabel("Velocity")
             axs[1].legend()
