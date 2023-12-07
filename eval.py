@@ -275,7 +275,7 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
         pred_times = gt_times
         mae = np.mean(np.abs(pred_traj - gt_traj))
 
-    print(mae)
+    print("MAE (reconstruction) on the validation set: ", mae)
     
     if visualize:
         fig, axs = plt.subplots(2, 1, figsize=(10, 10))
@@ -307,6 +307,82 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
     return mae
 
 
+def visualize_pred_loss(ckpt_path="./ckpts/model_1000.pt", params=None):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dataloader = get_dataloader(batch_size=32, data_path="val_data_200_steps.pickle", num_workers=4, shuffle=False)
+
+    hidden_size = params["hidden_size"] if params is not None else 100
+    predict_ahead = params["predict_ahead"] if params is not None else 1
+    is_vae = params["is_vae"] if params is not None else False
+    bottleneck_size = params["bottleneck_size"] if params is not None else -1
+    num_layers = params["num_layers"] if params is not None else 1
+    
+    encoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=predict_ahead, num_layers=num_layers).to(device)
+    decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=199, num_layers=num_layers, is_decoder=True).to(device)
+    model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae, bottleneck_size).to(device)
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))
+    model.eval()
+    
+    for i, (W, times, trajectories) in enumerate(dataloader):        
+        trajectories = trajectories.to(device)
+        batch_size, sample_size, time_size, state_size = trajectories.shape
+
+        # Run model
+        data = trajectories.view(-1, time_size, state_size)
+        input = data[:, :99, :] # only first 100 timesteps are input to encoder
+        targets = data[:, 1:, :]
+        with torch.no_grad():
+            predictions, _, _, _, _ = model(input, 199)
+        
+    predictions = predictions.detach().cpu().numpy()
+    targets = targets.detach().cpu().numpy()
+    mae_mean = np.mean(np.abs(predictions - targets), axis=0)
+    mae_std = np.std(np.abs(predictions - targets), axis=0)
+    
+    loss_recon = np.mean(mae_mean[:99, :], axis=0)
+    loss_pred = np.mean(mae_mean[99:, :], axis=0)
+
+    # Plot MAE of placement
+    _, axes = plt.subplots(2, 1, figsize=(10, 10))
+
+    axes[0].plot(mae_mean[:, 0], label='x1 (m1 displacement)')
+    axes[0].fill_between(np.arange(199), mae_mean[:, 0] - mae_std[:, 0], mae_mean[:, 0] + mae_std[:, 0], alpha=0.2)
+    
+    axes[0].plot(mae_mean[:, 1], label='x2 (m2 displacement)')
+    axes[0].fill_between(np.arange(199), mae_mean[:, 1] - mae_std[:, 1], mae_mean[:, 1] + mae_std[:, 1], alpha=0.2)
+    
+    # Annotation
+    axes[0].axvline(x=100, color='grey', linestyle=':', linewidth=1)
+    axes[0].annotate('Reconstruction', xy=(85, 4), arrowprops=dict(facecolor='black', shrink=0.05), horizontalalignment='right')
+    axes[0].annotate('Prediction', xy=(115, 4), arrowprops=dict(facecolor='black', shrink=0.05))
+
+    axes[0].set_title("Reconstruction Loss: [x1] {:.2f}, [x2] {:.2f}\n".format(*loss_recon[:2]) + \
+        "Prediction Loss: [x1] {:.2f}, [x2] {:.2f}".format(*loss_pred[:2])) 
+
+    # Plot MAE of velocities
+    axes[1].plot(mae_mean[:, 2], label='x1_dot (m1 velocity)')
+    axes[1].fill_between(np.arange(199), mae_mean[:, 2] - mae_std[:, 2], mae_mean[:, 2] + mae_std[:, 2], alpha=0.2)
+
+    axes[1].plot(mae_mean[:, 3], label='x2_dot (m2 velocity)')
+    axes[1].fill_between(np.arange(199), mae_mean[:, 3] - mae_std[:, 3], mae_mean[:, 3] + mae_std[:, 3], alpha=0.2)
+    
+    # Annotation
+    axes[1].axvline(x=100, color='grey', linestyle=':', linewidth=1)
+    axes[1].annotate('Reconstruction', xy=(85, 5), arrowprops=dict(facecolor='black', shrink=0.05), horizontalalignment='right')
+    axes[1].annotate('Prediction', xy=(115, 5), arrowprops=dict(facecolor='black', shrink=0.05))
+    
+    axes[1].set_title("Reconstruction Loss: [x1_dot] {:.2f}, [x2_dot] {:.2f}\n".format(*loss_recon[2:]) + \
+        "Prediction Loss: [x1_dot] {:.2f}, [x2_dot] {:.2f}".format(*loss_pred[2:])) 
+
+    for i in range(2):
+        axes[i].set_xlabel('Time Steps')
+        axes[i].set_ylabel('Average Loss')
+        axes[i].legend()
+
+    plt.tight_layout()
+    plt.savefig(f'./pred_loss')
+
+
 if __name__ == "__main__":
     # Evaluate parameters
     # evaluate(
@@ -316,12 +392,17 @@ if __name__ == "__main__":
     # )
     evaluate(
         "./ckpts/vae_model_2000.pt", 'VAEAutoencoder', 
-        {"hidden_size": 50, "predict_ahead": 1, "is_vae": False, "bottleneck_size": -1, "num_layers": 2}
+        {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
     )
     
     # # Trajectories
     # visualize_trajectory("./ckpts/framework1_best.pt", 100, 'AutoregressiveLSTM', {"hidden_size": 100, "predict_ahead": 10})
     visualize_trajectory(
         "./ckpts/vae_model_2000.pt", 0, 'VAEAutoencoder', 
-        {"hidden_size": 50, "predict_ahead": 1, "is_vae": False, "bottleneck_size": -1, "num_layers": 2}
+         {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
+    )
+    
+    visualize_pred_loss(
+        "./ckpts/vae_model_2000.pt",
+        {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
     )
