@@ -7,7 +7,6 @@ import torch
 
 from model import TrajectoryLSTM, AutoregressiveLSTM, VAEAutoencoder
 from dynamics import get_dataloader
-from train import opt_linear
 
 # seed
 seed_value = 42
@@ -22,6 +21,89 @@ if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = False
 
 
+def get_hidden_vectors_and_params(model, dataloader, device, model_type="AutoregressiveLSTM"):
+    """
+    Extract hidden vectors (a column of ones is added as bias) and ground truth parameters for a given model.
+    """
+    y, y_hat = [], []
+    for _, (W, _, trajectories) in enumerate(dataloader):        
+        trajectories = trajectories.to(device)
+        batch_size, sample_size, time_size, state_size = trajectories.shape
+
+        # Run model
+        data = trajectories.view(-1, time_size, state_size)
+        input = data[:, :-1, :]
+
+        with torch.no_grad():
+            model_outputs = model(input)
+            hidden_vecs = model_outputs[-1] # the last entry is the hidden_vecs
+            if model_type == "AutoregressiveLSTM":
+                hidden_vecs = model.get_embedding(hidden_vecs)
+
+        # Reshape and store hidden vectors and ground truth parameters
+        hidden_vecs = hidden_vecs.mean(dim=0)
+        W = W[:, 2:].repeat_interleave(sample_size, dim=0)
+
+        y_hat.append(hidden_vecs)
+        y.append(W)
+    
+    # Add columns of ones for bias term
+    hidden_vecs = torch.cat(y_hat, dim=0).cpu()
+    ones = torch.ones(hidden_vecs.shape[0], 1)
+    hidden_vecs_with_bias = torch.cat((hidden_vecs, ones), dim=1).cpu()
+    gt_params = torch.cat(y, dim=0).cpu()
+
+    return hidden_vecs_with_bias, gt_params
+
+def solve(X, Y):
+    """
+    Optimize a linear layer to map hidden vectors to parameters.
+    """
+    linear_layer = torch.linalg.lstsq(X, Y).solution
+    return linear_layer.numpy()
+
+
+def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
+    """
+    Evaluate the model on the validation set.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
+
+    hidden_size = params["hidden_size"] if params is not None else 100
+    predict_ahead = params["predict_ahead"] if params is not None else 1
+    bottleneck_size = params["bottleneck_size"] if params is not None else -1
+    num_layers = params["num_layers"] if params is not None else 1
+    encoder = AutoregressiveLSTM(
+        hidden_size=hidden_size, 
+        predict_ahead=predict_ahead,
+        num_layers=num_layers
+    ).to(device)
+
+    # Load the model
+    if model_type == 'AutoregressiveLSTM':
+        model = encoder
+    elif model_type == 'VAEAutoencoder':
+        is_vae = params["is_vae"] if params is not None else False
+        decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, num_layers=num_layers, is_decoder=True).to(device)
+        model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae, bottleneck_size).to(device)
+          
+    model.load_state_dict(torch.load(ckpt_path, map_location = device))
+    model.eval()
+
+    # Extract hidden vectors and parameters
+    hidden_vecs, gt_params = get_hidden_vectors_and_params(model, dataloader, device, model_type) # hidden_vecs here has bias column
+
+    # Solve for the linear system
+    linear_layer = solve(hidden_vecs, gt_params)
+
+    # Evaluate using the linear_layer
+    pred_params = np.matmul(hidden_vecs, linear_layer).numpy()
+    mae = np.mean(np.abs(pred_params - gt_params.numpy()), axis=0)
+    print("MAE (params) on the training set: ", mae)
+    return linear_layer
+
+
 def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM', params=None):
     """Evaluate the model on the validation set."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -32,9 +114,13 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
 
     hidden_size = params["hidden_size"] if params is not None else 100
     predict_ahead = params["predict_ahead"] if params is not None else 1
+    bottleneck_size = params["bottleneck_size"] if params is not None else -1
+    num_layers = params["num_layers"] if params is not None else 1
+
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
-        predict_ahead=predict_ahead
+        predict_ahead=predict_ahead,
+        num_layers=num_layers
     ).to(device)
 
     # load the model
@@ -42,8 +128,8 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
         model = encoder
     elif model_type == 'VAEAutoencoder':
         is_vae = params["is_vae"] if params is not None else False
-        decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
-        model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae).to(device)
+        decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, num_layers=num_layers, is_decoder=True).to(device)
+        model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae, bottleneck_size).to(device)
     
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
@@ -64,7 +150,7 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
                 hidden_vecs = model.get_embedding(hidden_vecs)
         
         # Add a bias term to the hidden vectors
-        hidden_vecs = hidden_vecs.squeeze(0)
+        hidden_vecs = hidden_vecs.mean(dim=0)
         ones = torch.ones(hidden_vecs.shape[0], 1).to(device)
         X = torch.cat((hidden_vecs, ones), dim=1)
         pred_W = torch.mm(X, linear_layer).unsqueeze(0)
@@ -92,6 +178,7 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
     print("MAE (params) on the validation set: ", mae)
 
     visualize_params_with_labels(pred_params, gt_params, string_labels, model_type)
+    return mae.mean()
 
 
 def visualize_params_with_labels(pred_params, gt_params, labels, model_type='AutoregressiveLSTM'):
@@ -130,17 +217,20 @@ def visualize_params_with_labels(pred_params, gt_params, labels, model_type='Aut
     plt.savefig(f'./params_{model_type}.png')
 
 
-def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='AutoregressiveLSTM', params=None):
+def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='AutoregressiveLSTM', params=None, visualize=True):
     """Analytically optimize a linear layer to map hidden vectors to parameters."""
     # Load data
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4, shuffle=False)
+    dataloader = get_dataloader(batch_size=32, data_path="val_data.pickle", num_workers=4, shuffle=False)
 
     hidden_size = params["hidden_size"] if params is not None else 100
     predict_ahead = params["predict_ahead"] if params is not None else 1
+    bottleneck_size = params["bottleneck_size"] if params is not None else -1
+    num_layers = params["num_layers"] if params is not None else 1
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
-        predict_ahead=predict_ahead
+        predict_ahead=predict_ahead,
+        num_layers=num_layers
     ).to(device)
 
     # Load model
@@ -148,8 +238,8 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
         model = encoder
     elif model_type == 'VAEAutoencoder':
         is_vae = params["is_vae"]
-        decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, is_decoder=True).to(device)
-        model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae).to(device)
+        decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, num_layers=num_layers, is_decoder=True).to(device)
+        model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae, bottleneck_size).to(device)
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
 
@@ -186,38 +276,52 @@ def visualize_trajectory(ckpt_path="./ckpts/model_1000.pt", idx=0, model_type='A
         mae = np.mean(np.abs(pred_traj - gt_traj))
 
     print(mae)
-    fig, axs = plt.subplots(2, 1, figsize=(10, 10))
-
-    # Displacement subplot
-    axs[0].plot(gt_times, gt_traj[:, 0], label="x1 (m1 displacement)")
-    axs[0].plot(gt_times, gt_traj[:, 1], label="x2 (m2 displacement)")
-    axs[0].plot(pred_times, pred_traj[:, 0], label="x1 (pred)")
-    axs[0].plot(pred_times, pred_traj[:, 1], label="x2 (pred)")
-    axs[0].set_xlabel("Time")
-    axs[0].set_ylabel("Displacement")
-    axs[0].legend()
-    axs[0].grid(True)
-    axs[0].set_title("m1 = {}, m2 = {}".format(*W[idx // 50, 2:].tolist()) + "\n" + "MAE = {:.4f}".format(mae))
-
-    # Velocity subplot
-    axs[1].plot(gt_times, gt_traj[:, 2], label="x1_dot (m1 velocity)")
-    axs[1].plot(gt_times, gt_traj[:, 3], label="x2_dot (m2 velocity)")
-    axs[1].plot(pred_times, pred_traj[:, 2], label="x1_dot (pred)")
-    axs[1].plot(pred_times, pred_traj[:, 3], label="x2_dot (pred)")
-    axs[1].set_xlabel("Time")
-    axs[1].set_ylabel("Velocity")
-    axs[1].legend()
-    axs[1].grid(True)
-
-    plt.tight_layout()
-    plt.savefig(f'./visualize_traj_{model_type}.png')
     
+    if visualize:
+        fig, axs = plt.subplots(2, 1, figsize=(10, 10))
+
+        # Displacement subplot
+        axs[0].plot(gt_times, gt_traj[:, 0], label="x1 (m1 displacement)")
+        axs[0].plot(gt_times, gt_traj[:, 1], label="x2 (m2 displacement)")
+        axs[0].plot(pred_times, pred_traj[:, 0], label="x1 (pred)")
+        axs[0].plot(pred_times, pred_traj[:, 1], label="x2 (pred)")
+        axs[0].set_xlabel("Time")
+        axs[0].set_ylabel("Displacement")
+        axs[0].legend()
+        axs[0].grid(True)
+        axs[0].set_title("m1 = {}, m2 = {}".format(*W[idx // 50, 2:].tolist()) + "\n" + "MAE = {:.4f}".format(mae))
+
+        # Velocity subplot
+        axs[1].plot(gt_times, gt_traj[:, 2], label="x1_dot (m1 velocity)")
+        axs[1].plot(gt_times, gt_traj[:, 3], label="x2_dot (m2 velocity)")
+        axs[1].plot(pred_times, pred_traj[:, 2], label="x1_dot (pred)")
+        axs[1].plot(pred_times, pred_traj[:, 3], label="x2_dot (pred)")
+        axs[1].set_xlabel("Time")
+        axs[1].set_ylabel("Velocity")
+        axs[1].legend()
+        axs[1].grid(True)
+
+        plt.tight_layout()
+        plt.savefig(f'./visualize_traj_{model_type}.png')
+    
+    return mae
+
 
 if __name__ == "__main__":
     # Evaluate parameters
-    evaluate("./ckpts/framework1_best.pt", 'AutoregressiveLSTM', {"hidden_size": 100, "predict_ahead": 1})
-    evaluate("./ckpts/framework2_best_pred_loss.pt", 'VAEAutoencoder', {"hidden_size": 100, "predict_ahead": 1, "is_vae": False})
+    # evaluate(
+    #     "./ckpts/framework1_best.pt", 
+    #     'AutoregressiveLSTM', 
+    #     {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 1}
+    # )
+    evaluate(
+        "./ckpts/vae_model_2000.pt", 'VAEAutoencoder', 
+        {"hidden_size": 50, "predict_ahead": 1, "is_vae": False, "bottleneck_size": -1, "num_layers": 2}
+    )
     
     # # Trajectories
     # visualize_trajectory("./ckpts/framework1_best.pt", 100, 'AutoregressiveLSTM', {"hidden_size": 100, "predict_ahead": 10})
-    # visualize_trajectory("./ckpts/framework2_best_pred_loss.pt", 100, 'VAEAutoencoder', {"hidden_size": 100, "predict_ahead": 1, "is_vae": False})
+    visualize_trajectory(
+        "./ckpts/vae_model_2000.pt", 0, 'VAEAutoencoder', 
+        {"hidden_size": 50, "predict_ahead": 1, "is_vae": False, "bottleneck_size": -1, "num_layers": 2}
+    )
