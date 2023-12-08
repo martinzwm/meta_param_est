@@ -74,10 +74,13 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
     predict_ahead = params["predict_ahead"] if params is not None else 1
     bottleneck_size = params["bottleneck_size"] if params is not None else -1
     num_layers = params["num_layers"] if params is not None else 1
+    embedding_out = params["embedding_out"] if params is not None else -1
+
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
         predict_ahead=predict_ahead,
-        num_layers=num_layers
+        num_layers=num_layers,
+        embedding_out=embedding_out
     ).to(device)
 
     # Load the model
@@ -107,7 +110,7 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
 def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM', params=None):
     """Evaluate the model on the validation set."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataloader = get_dataloader(batch_size=32, data_path="val_data.pickle", num_workers=4)
+    dataloader = get_dataloader(batch_size=32, data_path="val_data.pickle", num_workers=4, shuffle=False)
     
     linear_layer = opt_linear(ckpt_path, model_type, params)
     linear_layer = torch.from_numpy(linear_layer).to(device)
@@ -116,11 +119,13 @@ def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM'
     predict_ahead = params["predict_ahead"] if params is not None else 1
     bottleneck_size = params["bottleneck_size"] if params is not None else -1
     num_layers = params["num_layers"] if params is not None else 1
+    embedding_out = params["embedding_out"] if params is not None else -1
 
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
         predict_ahead=predict_ahead,
-        num_layers=num_layers
+        num_layers=num_layers,
+        embedding_out=embedding_out
     ).to(device)
 
     # load the model
@@ -187,31 +192,24 @@ def visualize_params_with_labels(pred_params, gt_params, labels, model_type='Aut
     pred_params = np.array(pred_params)
     gt_params = np.array(gt_params)
     labels = np.array(labels)
-    
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    
-    # Normalize values for colormap scaling
-    gt_norm1 = plt.Normalize(gt_params[:,0].min(), gt_params[:,0].max())
-    gt_norm2 = plt.Normalize(gt_params[:,1].min(), gt_params[:,1].max())
+    colors = cm.tab20(np.linspace(0, 1, len(labels) // 2)) # 2 sample trajectories per parameter set
 
     for i in range(len(gt_params)):
-        # Use red colormap for first value and blue colormap for second value
-        red_colormap = cm.Reds(gt_norm1(gt_params[i, 0]))
-        blue_colormap = cm.Blues(gt_norm2(gt_params[i, 1]))
-        
-        # Combine the two colormaps to produce a single color for the point
-        combined_color = np.clip([red_colormap[j] + blue_colormap[j] for j in range(3)], 0, 1)
-        
-        ax1.scatter(gt_params[i, 0], gt_params[i, 1], color=combined_color)
-        # ax1.xlabel("m1"); ax1.ylabel("m2")
-        ax1.text(gt_params[i, 0], gt_params[i, 1], str(labels[i]), fontsize=8)
+        ax1.scatter(gt_params[i, 0], gt_params[i, 1], color=colors[i//2])
+        ax1.text(gt_params[i, 0], gt_params[i, 1], str(labels[i]), fontsize=8, ha='center')
 
-        ax2.scatter(pred_params[i, 0], pred_params[i, 1], color=combined_color)
-        # ax2.xlabel("m1"); ax2.ylabel("m2")
-        ax2.text(pred_params[i, 0], pred_params[i, 1], str(labels[i]), fontsize=8)
+        ax2.scatter(pred_params[i, 0], pred_params[i, 1], color=colors[i//2])
+        ax2.text(pred_params[i, 0], pred_params[i, 1], str(labels[i]), fontsize=8, ha='center')
 
     ax1.set_title('Ground Truth Parameters')
+    ax1.set_xlabel("m1")
+    ax1.set_ylabel("m2")
+
     ax2.set_title('Predicted Parameters')
+    ax2.set_xlabel("m1")
+    ax2.set_ylabel("m2")
     
     plt.tight_layout()
     plt.savefig(f'./params_{model_type}.png')
@@ -385,24 +383,24 @@ def visualize_pred_loss(ckpt_path="./ckpts/model_1000.pt", params=None):
 
 if __name__ == "__main__":
     # Evaluate parameters
-    # evaluate(
-    #     "./ckpts/framework1_best.pt", 
-    #     'AutoregressiveLSTM', 
-    #     {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 1}
-    # )
     evaluate(
-        "./ckpts/vae_model_2000.pt", 'VAEAutoencoder', 
-        {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
+        "./ckpts/model_2000.pt", 
+        'AutoregressiveLSTM', 
+        {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 4, "embedding_out": -1}
     )
+    # evaluate(
+    #     "./ckpts/vae_model_2000.pt", 'VAEAutoencoder', 
+    #     {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
+    # )
     
-    # # Trajectories
-    # visualize_trajectory("./ckpts/framework1_best.pt", 100, 'AutoregressiveLSTM', {"hidden_size": 100, "predict_ahead": 10})
-    visualize_trajectory(
-        "./ckpts/vae_model_2000.pt", 0, 'VAEAutoencoder', 
-         {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
-    )
+    # # # Trajectories
+    # # visualize_trajectory("./ckpts/framework1_best.pt", 100, 'AutoregressiveLSTM', {"hidden_size": 100, "predict_ahead": 10})
+    # visualize_trajectory(
+    #     "./ckpts/vae_model_2000.pt", 0, 'VAEAutoencoder', 
+    #      {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
+    # )
     
-    visualize_pred_loss(
-        "./ckpts/vae_model_2000.pt",
-        {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
-    )
+    # visualize_pred_loss(
+    #     "./ckpts/vae_model_2000.pt",
+    #     {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
+    # )

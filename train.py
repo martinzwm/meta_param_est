@@ -34,11 +34,13 @@ default_config = {
     'predict_ahead': 1, # 1 for autoregressive, 99 for VAE
     'hidden_size': 100,
     'lambda_kl': 0,
+    'lambda_cov': 0,
     'lambda_contrastive': 0.0,
     'lambda_pred': 1.0,
     'is_vae': False,
-    'bottleneck_size': 20,
-    'num_layers': 8,
+    'bottleneck_size': -1,
+    'embedding_out': -1,
+    'num_layers': 4,
 }
     
 def train_vae_contrastive(config=None):
@@ -194,11 +196,16 @@ def train_contrastive(config=None):
     hidden_size = config['hidden_size']
     lr = config['learning_rate']
     num_epochs = config['num_epochs']
+    num_layers = config['num_layers']
+    embedding_out = config['embedding_out']
+    lambda_cov = config['lambda_cov']
     
     # Load model
     encoder = AutoregressiveLSTM(
         hidden_size=hidden_size, 
-        predict_ahead=predict_ahead
+        predict_ahead=predict_ahead,
+        embedding_out=embedding_out,
+        num_layers=num_layers,
     ).to(device)
     # encoder.load_state_dict(torch.load("./ckpts/model_10000.pt"))
     optimizer = optim.Adam(encoder.parameters(), lr=lr)
@@ -234,23 +241,34 @@ def train_contrastive(config=None):
             loss_predictive = loss_fn_predictive(predictions_auto, targets_auto)
 
             # Contrastive loss
-            hidden_vecs = hidden_vecs.squeeze(0)
+            hidden_vecs = hidden_vecs.mean(dim=0)
             hidden_vecs = hidden_vecs.view(batch_size, sample_size, -1)
 
             # Sample sample_size number of times, this is a hyperparameter.
             loss_contrastive_list = []
+            loss_cov_list = []
             for i in range(10):
                 indices = torch.randint(sample_size, (batch_size, 2), device=trajectories.device) # NOTE: could lead to duplicate samples
                 sample1 = hidden_vecs[torch.arange(batch_size), indices[:, 0], :]
                 sample2 = hidden_vecs[torch.arange(batch_size), indices[:, 1], :]
 
                 # Force top k dimension to be corresponds to parameters
-                sample1 = sample1[:, :10]
-                sample2 = sample2[:, :10]
+                sample1 = sample1[:, :75]
+                sample2 = sample2[:, :75]
                 sample1 = sample1 / torch.norm(sample1, dim=1, keepdim=True)
                 sample2 = sample2 / torch.norm(sample2, dim=1, keepdim=True)
                 loss_contrastive_list.append(loss_fn_contrastive(sample1, sample2))
+
+                # # Computa covariance loss
+                # X = torch.concat((sample1, sample2), dim=0)
+                # X_centered = X - torch.mean(X, dim=0)
+                # cov_matrix = torch.matmul(X_centered.T, X_centered) / (X_centered.size(0) - 1)
+                # mask = torch.ones_like(cov_matrix) - torch.eye(cov_matrix.size(0)).to(device)
+                # loss_cov = torch.sum(torch.abs(cov_matrix * mask))
+                # loss_cov_list.append(loss_cov)
+
             loss_contrastive = torch.mean(torch.stack(loss_contrastive_list))
+            # loss_cov = torch.mean(torch.stack(loss_cov_list))
 
             # Total loss
             loss = lambda_traj * loss_predictive + loss_contrastive
@@ -268,6 +286,7 @@ def train_contrastive(config=None):
             print("Epoch: {}, Loss: {}".format(epoch, total_loss / len(dataloader)))
             print("Predictive Loss: {}".format(total_loss_predictive / len(dataloader)))
             print("Contrastive Loss: {}".format(total_loss_contrastive / len(dataloader)))
+            # print("Covariance Loss: {}".format(loss_cov / len(dataloader)))
             # print("Sample 1: {}".format(sample1[:2]))
             # print("Sample 2: {}".format(sample2[:2]))
 
@@ -382,12 +401,12 @@ def lstm_hyperparam_search():
 
 if __name__ == "__main__":
     # Train
-    # train_contrastive(default_config)    
+    train_contrastive(default_config)    
     # train_vae_contrastive(default_config)
     
     # # Sweep
     # lstm_hyperparam_search()
-    vae_hyperparam_search()
+    # vae_hyperparam_search()
 
     # # Evaluate on training set
     # for epoch in range(1000, 60001, 1000):
