@@ -206,10 +206,14 @@ def visualize_params_with_labels(pred_params, gt_params, labels, model_type='Aut
     ax1.set_title('Ground Truth Parameters')
     ax1.set_xlabel("m1")
     ax1.set_ylabel("m2")
+    ax1.set_xlim([0.8, 2.2])
+    ax1.set_ylim([0.8, 2.2])
 
     ax2.set_title('Predicted Parameters')
     ax2.set_xlabel("m1")
     ax2.set_ylabel("m2")
+    ax2.set_xlim([0.8, 2.2])
+    ax2.set_ylim([0.8, 2.2])
     
     plt.tight_layout()
     plt.savefig(f'./params_{model_type}.png')
@@ -384,7 +388,7 @@ def visualize_pred_loss(ckpt_path="./ckpts/model_1000.pt", params=None):
 if __name__ == "__main__":
     # Evaluate parameters
     evaluate(
-        "./ckpts/model_2000.pt", 
+        "./ckpts/framework1_best.pt", 
         'AutoregressiveLSTM', 
         {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 4, "embedding_out": -1}
     )
