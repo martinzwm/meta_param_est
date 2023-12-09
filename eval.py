@@ -1,5 +1,6 @@
 import pdb
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
@@ -63,12 +64,12 @@ def solve(X, Y):
     return linear_layer.numpy()
 
 
-def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
+def opt_linear(ckpt_path, train_data_path="train_data.pickle", model_type='AutoregressiveLSTM', params=None):
     """
     Evaluate the model on the validation set.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=4)
+    dataloader = get_dataloader(batch_size=32, data_path=train_data_path, num_workers=4)
 
     hidden_size = params["hidden_size"] if params is not None else 100
     predict_ahead = params["predict_ahead"] if params is not None else 1
@@ -90,7 +91,7 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
         is_vae = params["is_vae"] if params is not None else False
         decoder = AutoregressiveLSTM(hidden_size=hidden_size, predict_ahead=99, num_layers=num_layers, is_decoder=True).to(device)
         model = VAEAutoencoder(encoder, decoder, hidden_size, is_vae, bottleneck_size).to(device)
-          
+
     model.load_state_dict(torch.load(ckpt_path, map_location = device))
     model.eval()
 
@@ -107,12 +108,18 @@ def opt_linear(ckpt_path, model_type='AutoregressiveLSTM', params=None):
     return linear_layer
 
 
-def evaluate(ckpt_path="./ckpts/model_60000.pt", model_type='AutoregressiveLSTM', params=None):
+def evaluate(
+    ckpt_path="./ckpts/model_60000.pt", 
+    train_data_path="train_data.pickle",
+    val_data_path="val_data.pickle",
+    model_type='AutoregressiveLSTM', 
+    params=None
+):
     """Evaluate the model on the validation set."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataloader = get_dataloader(batch_size=32, data_path="val_data.pickle", num_workers=4, shuffle=False)
+    dataloader = get_dataloader(batch_size=32, data_path=val_data_path, num_workers=4, shuffle=False)
     
-    linear_layer = opt_linear(ckpt_path, model_type, params)
+    linear_layer = opt_linear(ckpt_path, train_data_path, model_type, params)
     linear_layer = torch.from_numpy(linear_layer).to(device)
 
     hidden_size = params["hidden_size"] if params is not None else 100
@@ -385,13 +392,72 @@ def visualize_pred_loss(ckpt_path="./ckpts/model_1000.pt", params=None):
     plt.savefig(f'./pred_loss')
 
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+def generalizability():
+    # Define parameters and dataset
+    noise_amounts = [0, 0.01, 0.05, 0.1, 0.2]
+    model_type = 'AutoregressiveLSTM'
+    params = {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 4, "embedding_out": -1}
+
+    # Dictionaries to store MAE for clean and noisy models
+    mae_clean = {}
+    mae_noisy = {}
+
+    # Evaluate model trained with clean data
+    model_path = "./ckpts/framework1_best_2000.pt"
+    for noise in noise_amounts:
+        train_data_path = f"train_data_{noise}noise.pickle"
+        val_data_path = f"val_data_{noise}noise.pickle"
+        mae_clean[noise] = evaluate(model_path, train_data_path, val_data_path, model_type, params)
+    
+    # Evaluate model trained with noisy data
+    for noise in noise_amounts:
+        train_data_path = f"train_data_{noise}noise.pickle"
+        val_data_path = f"val_data_{noise}noise.pickle"
+        if noise == 0:
+            model_path = "./ckpts/framework1_best_2000.pt"
+        else:
+            model_path = f"./ckpts/model_2000_{noise}noise.pt"
+        mae_noisy[noise] = evaluate(model_path, train_data_path, val_data_path, model_type, params)    
+
+    # Prepare data for seaborn
+    data = []
+    for noise in noise_amounts:
+        data.append({'Noise Level': noise*100, 'MAE': mae_clean[noise], 'Model trained on': 'clean dataset'})
+        data.append({'Noise Level': noise*100, 'MAE': mae_noisy[noise], 'Model trained on': 'noisy dataset'})
+
+    df = pd.DataFrame(data)
+
+    # Set seaborn style
+    sns.set(style="whitegrid")
+
+    # Create seaborn bar plot
+    plt.figure(figsize=(10, 6))
+    bar_plot = sns.barplot(x='Noise Level', y='MAE', hue='Model trained on', data=df, palette="muted")
+
+    # Add labels and title
+    bar_plot.set_xlabel('Noise Level (%)', fontsize=14)
+    bar_plot.set_ylabel('MAE', fontsize=14)
+
+    # Save and show plot
+    plt.savefig(f'./generalizability.png')
+    plt.show()
+
+
 if __name__ == "__main__":
-    # Evaluate parameters
-    evaluate(
-        "./ckpts/framework1_best.pt", 
-        'AutoregressiveLSTM', 
-        {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 4, "embedding_out": -1}
-    )
+    generalizability()
+
+    # # Evaluate parameters
+    # evaluate(
+    #     "./ckpts/framework1_best_2000.pt", 
+    #     "train_data.pickle",
+    #     "val_data.pickle",
+    #     'AutoregressiveLSTM', 
+    #     {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 4, "embedding_out": -1}
+    # )
     # evaluate(
     #     "./ckpts/vae_model_2000.pt", 'VAEAutoencoder', 
     #     {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}

@@ -22,10 +22,11 @@ if torch.cuda.is_available():
 
 
 class SpringMassSystem(nn.Module):
-    def __init__(self, W):
+    def __init__(self, W, noise_amount=None):
         super(SpringMassSystem, self).__init__()
         
         self.k1, self.k2, self.m1, self.m2 = W
+        self.noise_amount = noise_amount
     
     def dynamics(self, t, state):
         """
@@ -54,6 +55,8 @@ class SpringMassSystem(nn.Module):
         for t in times[:-1]:
             derivatives = self.dynamics(t, states[-1])
             new_state = states[-1] + derivatives * dt
+            if self.noise_amount:
+                new_state += self.noise_amount * new_state * torch.randn_like(new_state)
             states.append(new_state)
         
         return times, torch.stack(states)
@@ -74,7 +77,7 @@ class SpringMassSystem(nn.Module):
         return times, trajectories
     
 
-def generate_data(num_parameter_sets=6, num_trajectories_per_set=1, t_span=[0, 10], dt=0.1, save_path=None):
+def generate_data(num_parameter_sets=6, num_trajectories_per_set=1, t_span=[0, 10], dt=0.1, noise_amount=None, save_path=None):
     """
     Generate random trajectories based on random parameters and initial states.
 
@@ -97,7 +100,7 @@ def generate_data(num_parameter_sets=6, num_trajectories_per_set=1, t_span=[0, 1
         for m2 in ms_linspace:
             # Define system
             W = torch.tensor([1.0, 1.0, m1, m2])
-            system = SpringMassSystem(W)
+            system = SpringMassSystem(W, noise_amount)
 
             # Randomly generate initial states (x1, x2 between -1.0 to 1.0 and velocities as 0)
             initial_states = torch.cat([
@@ -149,11 +152,11 @@ class TestDynamics:
     def __init__(self):
         pass
 
-    def test_dynamics(self, plot_figure=False):
+    def test_dynamics(self, plot_figure=False, noise_amount=None):
         """Example usage"""
         # Define dynamic system
         W = torch.tensor([1.0, 2.0, 1.0, 2.0])  # k1, k2, m1, m2
-        system = SpringMassSystem(W)
+        system = SpringMassSystem(W, noise_amount=noise_amount)
 
         # Define initial state
         initial_state = torch.tensor([0.1, 0.2, 0.0, 0.0])  # Initial displacements and velocities
@@ -253,12 +256,12 @@ class TestDynamics:
         print(dataset[0])
 
     def test_data_generation(self):
-        data = generate_data(num_parameter_sets=5, num_trajectories_per_set=100, save_path="train_data.pickle")
-        data = generate_data(num_parameter_sets=5, num_trajectories_per_set=2, save_path="val_data.pickle")
+        data = generate_data(num_parameter_sets=5, num_trajectories_per_set=100, noise_amount=0.0, save_path="train_data.pickle")
+        # data = generate_data(num_parameter_sets=5, num_trajectories_per_set=2, noise_amount=0.0, save_path="val_data.pickle")
         
 
 if __name__ == "__main__":
     test = TestDynamics()
-    # test.test_dynamics(plot_figure=True)
+    # test.test_dynamics(plot_figure=True, noise_amount=0.2)
     # test.generate_gif(variable="m2")
     test.test_data_generation()

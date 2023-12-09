@@ -190,7 +190,6 @@ def train_contrastive(config=None):
     
     # Hyperparameter
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # encoder = TrajectoryLSTM(hidden_size=10).to(device)
     lambda_traj = 10
     predict_ahead = config['predict_ahead']
     hidden_size = config['hidden_size']
@@ -207,7 +206,7 @@ def train_contrastive(config=None):
         embedding_out=embedding_out,
         num_layers=num_layers,
     ).to(device)
-    # encoder.load_state_dict(torch.load("./ckpts/model_10000.pt"))
+    # encoder.load_state_dict(torch.load("./ckpts/framework1_best_2000.pt"))
     optimizer = optim.Adam(encoder.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
 
@@ -253,8 +252,8 @@ def train_contrastive(config=None):
                 sample2 = hidden_vecs[torch.arange(batch_size), indices[:, 1], :]
 
                 # Force top k dimension to be corresponds to parameters
-                sample1 = sample1[:, :75]
-                sample2 = sample2[:, :75]
+                # sample1 = sample1[:, :75]
+                # sample2 = sample2[:, :75]
                 sample1 = sample1 / torch.norm(sample1, dim=1, keepdim=True)
                 sample2 = sample2 / torch.norm(sample2, dim=1, keepdim=True)
                 loss_contrastive_list.append(loss_fn_contrastive(sample1, sample2))
