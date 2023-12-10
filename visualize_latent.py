@@ -1,5 +1,6 @@
 import pdb
 import matplotlib.pyplot as plt
+import imageio
 import numpy as np
 import torch
 
@@ -18,50 +19,6 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed_value)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-
-def visualize_latent_gt(variable="m1"):
-    """Generate a .gif of trajectories to visualize the effect of m1 and m2 on the system"""
-    images = []
-    for v in np.linspace(1, 2, 100):
-        # Define dynamic system
-        if variable == "m1":
-            m1 = v
-            m2 = 1.0
-        elif variable == "m2":
-            m1 = 1.0
-            m2 = v
-        W = torch.tensor([1.0, 1.0, m1, m2]) # k1, k2, m1, m2
-        system = SpringMassSystem(W)
-
-        # Define initial state
-        initial_state = torch.tensor([1.0, -1.0, 0.0, 0.0])  # Initial displacements and velocities
-        t_span = [0, 10]  # From t=0 to t=10
-        dt = 0.1  # Time step
-
-        # Generate trajectories
-        times, trajectory = system.trajectory(initial_state, t_span, dt)
-
-        # Save figure
-        fig, ax = plt.subplots()
-        ax.plot(times, trajectory[:, 0], label="x1 (m1 displacement)")
-        ax.plot(times, trajectory[:, 1], label="x2 (m2 displacement)")
-        ax.set_ylim([-3, 3])
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Displacement")
-        ax.legend()
-        ax.grid(True)
-        ax.set_title("k1 = {}, k2 = {}, m1 = {:.2f}, m2 = {:.2f}".format(*W.tolist()))
-        plt.tight_layout()
-        fig.canvas.draw()
-        image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
-        image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-        images.append(image)
-        plt.close()
-    
-    # Create a .gif of the trajectories
-    import imageio
-    imageio.mimsave(f'./trajectories_{variable}.gif', images, duration=100)
 
 
 def get_control_knob(ckpt_path, model_type="VAEAutoencoder", params=None, variable="m1"):
@@ -99,6 +56,7 @@ def get_control_knob(ckpt_path, model_type="VAEAutoencoder", params=None, variab
 
     # # Solve for the linear system
     # linear_layer = solve(gt_params, hidden_vecs)
+    # linear_layer = torch.tensor(linear_layer, dtype=torch.float32).to(device)
 
     if variable == "m1":
         return X_1_1, X_2_1 - X_1_1
@@ -106,11 +64,17 @@ def get_control_knob(ckpt_path, model_type="VAEAutoencoder", params=None, variab
         return X_1_1, X_1_2 - X_1_1
 
 
-def visualize_latent_pred(ckpt_path, model_type="VAEAutoencoder", params=None, variable="m1"):
+def generate_combined_images(variable="m1", ckpt_path="./ckpts/framework2_best_pred_loss.pt", model_type="VAEAutoencoder", params=None):
+    # Define system parameters
+    initial_state = torch.tensor([1.0, -1.0, 0.0, 0.0])  # Initial displacements and velocities
+    t_span = [0, 10]  # From t=0 to t=10
+    dt = 0.1  # Time step
+
+    ## For generated trajectories
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Get the linear layer from the parameter space to the latent space
-    X_1_1, linear_layer = get_control_knob(ckpt_path, model_type, params)
+    X_1_1, linear_layer = get_control_knob(ckpt_path, model_type, params, variable)
     X_1_1 = X_1_1.unsqueeze(0).to(device)
     linear_layer = linear_layer.unsqueeze(0).to(device)
 
@@ -123,6 +87,33 @@ def visualize_latent_pred(ckpt_path, model_type="VAEAutoencoder", params=None, v
 
     images = []
     for v in np.linspace(1, 2, 100):
+        ## Generate the simulation image
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 8))  # Create a figure with two subplots
+
+        # Define dynamic system
+        if variable == "m1":
+            m1 = v
+            m2 = 1.0
+        elif variable == "m2":
+            m1 = 1.0
+            m2 = v
+        W = torch.tensor([1.0, 1.0, m1, m2]) # k1, k2, m1, m2
+        system = SpringMassSystem(W)
+
+        # Generate trajectories
+        times, trajectory = system.trajectory(initial_state, t_span, dt)
+
+        # Update ax to ax1 for the simulation plot
+        ax1.plot(times, trajectory[:, 0], label="x1 (m1 displacement)")
+        ax1.plot(times, trajectory[:, 1], label="x2 (m2 displacement)")
+        ax1.set_ylim([-3, 3])
+        ax1.set_xlabel("Time")
+        ax1.set_ylabel("Displacement")
+        ax1.legend()
+        ax1.grid(True)
+        ax1.set_title("Simulation: k1 = {}, k2 = {}, m1 = {:.2f}, m2 = {:.2f}".format(*W.tolist()))
+
+        ## Generate the prediction image
         # Get latent variable from parameter
         if variable == "m1":
             m1 = v
@@ -137,44 +128,39 @@ def visualize_latent_pred(ckpt_path, model_type="VAEAutoencoder", params=None, v
         W = np.array([1.0, 1.0, m1, m2])
 
         # Define initial state
-        initial_state = torch.tensor([[1, -1, 0.0, 0.0]]).to(device)  # Initial displacements and velocities
-        initial_state = initial_state.unsqueeze(1).repeat(1, 99, 1)
+        initial_state_pred = initial_state.unsqueeze(0).to(device)
+        initial_state_pred = initial_state_pred.unsqueeze(1).repeat(1, 99, 1)
 
         # Generate trajectories
-        trajectory, _ = model.decoder.forward(initial_state, latent)
+        trajectory, _ = model.decoder.forward(initial_state_pred, latent)
         trajectory = trajectory.squeeze().cpu().detach().numpy()
         times = np.arange(0.1, 10, 0.1)
+        # Update ax to ax2 for the prediction plot
+        ax2.plot(times, trajectory[:, 0], label="x1 (m1 displacement)")
+        ax2.plot(times, trajectory[:, 1], label="x2 (m2 displacement)")
+        ax2.set_ylim([-3, 3])
+        ax2.set_xlabel("Time")
+        ax2.set_ylabel("Displacement")
+        ax2.legend()
+        ax2.grid(True)
+        ax2.set_title("Prediction: k1 = {}, k2 = {}, m1 = {:.2f}, m2 = {:.2f}".format(*W.tolist()))
 
-        # Save figure
-        fig, ax = plt.subplots()
-        ax.plot(times, trajectory[:, 0], label="x1 (m1 displacement)")
-        ax.plot(times, trajectory[:, 1], label="x2 (m2 displacement)")
-        ax.set_ylim([-3, 3])
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Displacement")
-        ax.legend()
-        ax.grid(True)
-        ax.set_title("k1 = {}, k2 = {}, m1 = {:.2f}, m2 = {:.2f}".format(*W.tolist()))
+        # Save combined figure
         plt.tight_layout()
         fig.canvas.draw()
         image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
         image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
         images.append(image)
         plt.close()
-    
-    # Create a .gif of the trajectories
-    import imageio
-    imageio.mimsave(f'./trajectories_{variable}_pred.gif', images, duration=100)
 
-
+    # Create a .gif of the combined trajectories
+    imageio.mimsave(f'./combined_trajectories_{variable}.gif', images, duration=0.1)
 
 
 if __name__ == "__main__":
-    visualize_latent_gt(variable="m1")
-    visualize_latent_pred(
+    generate_combined_images(
         ckpt_path="./ckpts/framework2_best_pred_loss.pt",
         model_type="VAEAutoencoder",
         params={"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": -1},
         variable="m1"
     )
-
