@@ -95,7 +95,9 @@ def generate_data(num_parameter_sets=6, num_trajectories_per_set=1, t_span=[0, 1
 
     # Set m to be linspace bewteen 1 and 2 inclusive
     ms_linspace = torch.linspace(1, 2, num_parameter_sets)
-
+    # ms_linspace = torch.linspace(1.1, 1.9, 5) # evaluate generalizability to unseen parameters (interpolation)
+    # ms_linspace = torch.linspace(2.1, 2.9, 5) # evaluate generalizability to unseen parameters (extrapolation)
+    print(ms_linspace)
     for m1 in ms_linspace:
         for m2 in ms_linspace:
             # Define system
@@ -257,11 +259,11 @@ class TestDynamics:
 
     def test_data_generation(self):
         data = generate_data(num_parameter_sets=5, num_trajectories_per_set=100, noise_amount=0.0, save_path="train_data.pickle")
-        # data = generate_data(num_parameter_sets=5, num_trajectories_per_set=2, noise_amount=0.0, save_path="val_data.pickle")
+        data = generate_data(num_parameter_sets=5, num_trajectories_per_set=2, noise_amount=0.0, save_path="val_data.pickle")
         
 
 if __name__ == "__main__":
     test = TestDynamics()
-    # test.test_dynamics(plot_figure=True, noise_amount=0.2)
+    # test.test_dynamics(plot_figure=True, noise_amount=0.0)
     # test.generate_gif(variable="m2")
     test.test_data_generation()

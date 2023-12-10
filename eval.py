@@ -213,15 +213,15 @@ def visualize_params_with_labels(pred_params, gt_params, labels, model_type='Aut
     ax1.set_title('Ground Truth Parameters')
     ax1.set_xlabel("m1")
     ax1.set_ylabel("m2")
-    ax1.set_xlim([0.8, 2.2])
-    ax1.set_ylim([0.8, 2.2])
+    ax1.set_xlim([0.8, 2.2]), ax1.set_ylim([0.8, 2.2])
+    # ax1.set_xlim([2.0, 3.0]), ax1.set_ylim([2.0, 3.0]) # evaluate generalizability to unseen parameters (extrapolation)
 
     ax2.set_title('Predicted Parameters')
     ax2.set_xlabel("m1")
     ax2.set_ylabel("m2")
-    ax2.set_xlim([0.8, 2.2])
-    ax2.set_ylim([0.8, 2.2])
-    
+    ax2.set_xlim([0.8, 2.2]), ax2.set_ylim([0.8, 2.2])
+    # ax2.set_xlim([2.0, 3.0]), ax2.set_ylim([2.0, 3.0]) # evaluate generalizability to unseen parameters (extrapolation)
+
     plt.tight_layout()
     plt.savefig(f'./params_{model_type}.png')
 
@@ -448,16 +448,16 @@ def generalizability():
 
 
 if __name__ == "__main__":
-    generalizability()
+    # generalizability()
 
-    # # Evaluate parameters
-    # evaluate(
-    #     "./ckpts/framework1_best_2000.pt", 
-    #     "train_data.pickle",
-    #     "val_data.pickle",
-    #     'AutoregressiveLSTM', 
-    #     {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 4, "embedding_out": -1}
-    # )
+    # Evaluate parameters
+    evaluate(
+        "./ckpts/framework1_best_2000.pt", 
+        "train_data.pickle",
+        "val_data.pickle",
+        'AutoregressiveLSTM', 
+        {"hidden_size": 100, "predict_ahead": 1, "bottleneck_size": -1, "num_layers": 4, "embedding_out": -1}
+    )
     # evaluate(
     #     "./ckpts/vae_model_2000.pt", 'VAEAutoencoder', 
     #     {"hidden_size": 100, "predict_ahead": 1, "is_vae": False, "bottleneck_size": 20, "num_layers": 8}
