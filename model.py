@@ -81,7 +81,7 @@ class AutoregressiveLSTM(nn.Module):
             (h_t_auto, c_t_auto) = (h_t, c_t)
             lstm_out = self.linear(lstm_out)
             output_t = [lstm_out]
-    
+
             # Autoregressive prediction for the next 5 steps
             for _ in range(self.predict_ahead-1):  # We already have the output for the first future timestep
                 lstm_out, (h_t_auto, c_t_auto) = self.lstm(lstm_out, (h_t_auto, c_t_auto))
@@ -152,6 +152,114 @@ class VAEAutoencoder(nn.Module):
             return recon_x.squeeze(1), encoder_out, mu, logvar, bottleneck
         else:
             return recon_x.squeeze(1), encoder_out, mu, logvar, z
+        
+
+import torch.nn.functional as F
+
+class Attention(nn.Module):
+    def __init__(self, d_input, d_model):
+        super(Attention, self).__init__()
+        self.query_projection = nn.Linear(d_input, d_model)
+        self.key_projection = nn.Linear(d_input, d_model)
+        self.value_projection = nn.Linear(d_input, d_model)
+
+    def forward(self, x, mask=None):
+        query = self.query_projection(x)
+        key = self.key_projection(x)
+        value = self.value_projection(x)
+        out, attn = self.scaled_dot_product_attention(query, key, value, mask)
+        return out, attn
+
+    def scaled_dot_product_attention(self, query, key, value, mask):
+        """
+        Args:
+            - query [=] (B, T, d)
+            - key [=] (B, T, d)
+            - value [=] (B, T, d)
+            - mask [=] (T, T). Element to be masked are filled with 0.
+        Returns:
+            - out [=] (B, T, d)
+            - attn: attention matrix of probabilities [=] (B, T)
+        """
+        scores = torch.matmul(query, key.transpose(-2, -1)) 
+        scores /= np.sqrt(query.size(-1))
+
+        if mask:
+            scores = scores.masked_fill(mask==0, -1e-9)
+        
+        attn = F.softmax(scores, dim=-1)
+        out = torch.matmul(attn, value)
+        return out, attn
+
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_input, d_model, num_heads):
+        super(MultiHeadAttention, self).__init__()
+        self.heads = nn.ModuleList()
+        self.heads.append(Attention(d_input, d_model))
+        for _ in range(num_heads-1):
+            self.heads.append(Attention(d_model, d_model))
+        self.linear = nn.Linear(num_heads * d_model, d_model)
+    
+    def forward(self, x, attn_mask=None):
+        outs = []
+        for head in self.heads:
+            out, attn_score = head(x, attn_mask)
+            outs.append(out)
+
+        outs = torch.cat(outs, dim=1)
+        outs = self.linear(outs)
+        return outs
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, d_input, d_model, d_linear, num_heads, dropout):
+        super(TransformerBlock, self).__init__()
+        self.multihead_attn = MultiHeadAttention(d_input, d_model, num_heads) # TODO: use nn.MultiheadAttention
+        self.linear1 = nn.Linear(d_model, d_linear)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.linear2 = nn.Linear(d_linear, d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask=None, key_padding_mask=None):
+        """
+        Args:
+            - x [=] (B, T, d)
+            - mask [=] (T, T)
+            - key_padding_mask [=] (N, T), used to prevent attention on special 
+                tokens (e.g., <PAD>, <SEP>). A value of 1 means ignored, 0 means keep.
+        """
+        # Attention
+        # attn_output, _ = self.multihead_attn(x, x, x, 
+        #                                     attn_mask=mask, key_padding_mask=key_padding_mask)
+        attn_output, _ = self.multihead_attn(x, mask)
+        x = x + self.dropout(attn_output) # dropout and residual connection
+        x = self.norm1(x)
+        
+        # Feedforward
+        ff_output = self.linear2(self.dropout(F.relu(self.linear1(x))))
+        x = x + self.dropout(ff_output) # dropout and residual connection
+        out = self.norm2(x)
+        return out
+     
+
+"""Code for stacking multiple transformer block together"""
+class Transformer(nn.Module):
+    def __init__(self, d_input, d_model, d_linear, num_heads, dropout, num_layers):
+        super(Transformer, self).__init__()
+        self.layers = nn.ModuleList([
+            TransformerBlock(d_input, d_model, d_linear, num_heads, dropout) 
+            for _ in range(num_layers)
+        ])
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_input)) # TODO: should it be d_model?
+
+    def forward(self, x, mask=None):
+        cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)
+        x = torch.cat([cls_tokens, x], dim=1)
+        for layer in self.layers:
+            x = layer(x)
+        return x
 
 
 class TestModel:
@@ -174,7 +282,7 @@ class TestModel:
         print(target.shape)
 
         # Forward pass
-        output = lstm.get_embedding(input)
+        output, hidden = lstm(input)
         print(output.shape)
     
     def test_autoregressive_lstm(self):
@@ -188,24 +296,42 @@ class TestModel:
         input_size = 4
         hidden_size = 10
         output_size = 4
+        num_layers = 1
         predict_ahead = 10
         seq_len = 99
 
-        encoder = AutoregressiveLSTM(input_size, hidden_size, 1, output_size, predict_ahead, False)
-        decoder = AutoregressiveLSTM(input_size, hidden_size, 1, output_size, seq_len, True)
+        encoder = AutoregressiveLSTM(input_size, hidden_size, -1, num_layers, output_size, predict_ahead, False)
+        decoder = AutoregressiveLSTM(input_size, hidden_size, -1, num_layers, output_size, seq_len, True)
         autoencoder = VAEAutoencoder(encoder, decoder, hidden_size)
         
         input_tensor = torch.randn(16, seq_len, input_size)
-        recon_x, mu, logvar, c_t = autoencoder(input_tensor)  
+        recon_x, encoder_out, mu, logvar, c_t = autoencoder(input_tensor)  
         print('recon_x: ', recon_x.shape)
+        print('encoder_out: ', encoder_out.shape)
         print('mu: ', mu.shape)
         print('logvar: ', logvar.shape) 
         print('c_t: ', c_t.shape) 
         assert recon_x.shape == input_tensor.shape
+
+    def test_transformer(self):
+        # Define Transformer
+        d_input = 4
+        d_model = 32
+        d_linear = 32
+        num_heads = 4
+        dropout = 0.1
+        num_layers = 6
+        transformer = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+        
+        # Define input
+        input = torch.randn(16, 10, d_input)
+        output = transformer(input)
+        print(output.shape)
 
 
 if __name__ == "__main__":
     unittests = TestModel()
     # unittests.test_lstm()
     # unittests.test_autoregressive_lstm()
-    unittests.test_vae_autoencoder()
+    # unittests.test_vae_autoencoder()
+    unittests.test_transformer()
