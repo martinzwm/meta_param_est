@@ -1,4 +1,5 @@
 import pdb
+import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -6,7 +7,7 @@ import matplotlib.cm as cm
 
 import torch
 
-from transformer import Transformer
+from transformer import Transformer, TransformerDecoder
 from dynamics import get_dataloader
 from eval import visualize_params_with_labels
 
@@ -35,17 +36,23 @@ def get_embeddings(model, dataloader, device):
         - X: embeddings
         - y: ground truth system parameters
     """
+    model.eval()
     y, X = [], []
     for _, (W, _, trajectories) in enumerate(dataloader):
         W = W.to(device)       
         trajectories = trajectories.to(device)
         batch_size, sample_size, time_size, state_size = trajectories.shape
-
-        # Run model
         data = trajectories.view(-1, time_size, state_size)
-        with torch.no_grad():
-            embedding = model(data)
-            embedding = embedding[:, 0, :]
+
+        # Run model - not sure why torch.no_grad() would lead to nan results, need to partition to fit in memory
+        num_partition = 10
+        data = torch.chunk(data, num_partition, dim=0)
+        embedding_list = []
+        for i in range(num_partition):
+            embedding = model(data[i]).detach()
+            embedding_list.append(embedding)
+        embedding = torch.cat(embedding_list, dim=0)
+        embedding = embedding[:, 0, :]
 
         W = W[:, 2:].repeat_interleave(sample_size, dim=0)
 
@@ -99,6 +106,7 @@ def evaluate_transformer(
     x_val, y_val = get_embeddings(model, dataloader, device)
     pred_y_val = torch.mm(x_val, linear_layer)
     mae_val = torch.mean(torch.abs(pred_y_val - y_val), dim=0)
+    mae_val = mae_val.cpu().numpy()
 
     # Log results
     if log_result:
@@ -109,18 +117,12 @@ def evaluate_transformer(
         visualize_params_with_labels(pred_y_val.cpu(), y_val.cpu(), labels, "Transformer")
     return mae_train, mae_val
 
-    
 
 if __name__ == "__main__":
     # Create model
-    config = {
-        'd_input': 4,
-        'd_model': 32,
-        'd_linear': 64,
-        'num_heads': 4,
-        'dropout': 0.2,
-        'num_layers': 6,
-    }
+    config_file = "./configs/transformer_encoder_config.json"
+    with open(config_file, "r") as f:
+        config = json.load(f)
     d_input = config['d_input']
     d_model = config['d_model']
     d_linear = config['d_linear']
@@ -128,11 +130,12 @@ if __name__ == "__main__":
     dropout = config['dropout']
     num_layers = config['num_layers']
     model = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+    # model = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers)
 
     # Evaluate model
     evaluate_transformer(
         model,
-        ckpt_path="./ckpts/model_5000.pt", 
+        ckpt_path="./ckpts/encoder_best.pt", 
         train_data_path="./data/train_data.pickle",
         val_data_path="./data/val_data.pickle",
         log_result=True,
