@@ -108,7 +108,7 @@ class TransformerDecoder(Transformer):
         with torch.no_grad():
             for i in range(gen_T):
                 emb = self.forward(x)
-                x_out = self.pred_next_step(x_out)
+                x_out = self.pred_next_step(emb[:, -1, :]).unsqueeze(1)
                 x = torch.cat([x, x_out], dim=1)
         return x
 
@@ -159,6 +159,9 @@ class TestModel:
         input = torch.randn(16, 10, d_input)
         output = transformer(input)
         print(output.shape) # should be (16, 11, 64)
+
+        generated_traj = transformer.generate(input[:, 0:1, :], 10)
+        print(generated_traj.shape) # should be (16, 11, 4), 11 = 1 + 10
 
 
 if __name__ == "__main__":
