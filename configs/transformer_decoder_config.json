@@ -1,0 +1,13 @@
+{
+    "learning_rate": 0.00013,
+    "num_epochs": 5000,
+    "batch_size": 32,
+    "d_input": 4,
+    "d_model": 256,
+    "d_linear": 64,
+    "num_heads": 4,
+    "dropout": 0.2,
+    "num_layers": 4,
+    "log_to_wandb": false,
+    "mode": "decoder"
+}
