@@ -94,7 +94,8 @@ class TransformerDecoder(Transformer):
         x = torch.cat([cls_tokens, x], dim=1)
 
         # Create masking
-        mask = torch.triu(torch.ones(T+1, T+1), diagonal=1).to(x.device)
+        mask = torch.triu(torch.ones(T+1, T+1), diagonal=1).bool() # true for masked
+        mask = mask.to(x.device)
 
         # Apply transformer layers
         for layer in self.layers:
@@ -105,11 +106,11 @@ class TransformerDecoder(Transformer):
         return self.output_linear(emb)
     
     def generate(self, x, gen_T):
-        with torch.no_grad():
-            for i in range(gen_T):
-                emb = self.forward(x)
-                x_out = self.pred_next_step(emb[:, -1, :]).unsqueeze(1)
-                x = torch.cat([x, x_out], dim=1)
+        # with torch.no_grad():
+        for i in range(gen_T):
+            emb = self.forward(x)
+            x_out = self.pred_next_step(emb[:, -1, :]).unsqueeze(1)
+            x = torch.cat([x, x_out], dim=1)
         return x
 
 
