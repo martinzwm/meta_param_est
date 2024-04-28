@@ -12,7 +12,7 @@ from info_nce import InfoNCE
 
 from transformer import Transformer, TransformerDecoder
 from dynamics import get_dataloader
-from eval_transformer import evaluate_transformer
+from eval_transformer import evaluate_transformer, visualize_trajectory
 
 
 def train_transformer(config=None):
@@ -108,13 +108,23 @@ def train_transformer(config=None):
         if (epoch+1) % 100 == 0:
             model_path = f"./ckpts/model_{epoch+1}.pt"
             torch.save(model.state_dict(), model_path)
-            train_mae, val_mae = evaluate_transformer(
-                model, ckpt_path=model_path
-            )
-            print("MAE (params) on the training set: ", train_mae.mean())
-            if log_to_wandb:
-                wandb.save(model_path)  # Save model checkpoints to wandb
-                wandb.log({"train_mae": train_mae.mean().item()})
+            wandb.save(model_path) if log_to_wandb else None
+
+            # Log metrics
+            if mode == "encoder":
+                train_mae, val_mae = evaluate_transformer(
+                    model, ckpt_path=model_path
+                )
+                print("MAE (params) on the training set: ", train_mae.mean())
+                wandb.log({"train_mae": train_mae.mean().item()}) if log_to_wandb else None
+            elif mode == "decoder" or mode == "decoder-contrastive":
+                traj_val_mae = visualize_trajectory(
+                    model, ckpt_path=model_path,
+                    val_data_path="./data/val_data.pickle",
+                    visualize=False
+                )
+                print("MAE (trajectories) on the validation set: ", traj_val_mae)
+                wandb.log({"val_traj_mae": traj_val_mae}) if log_to_wandb else None
 
 
 def contrastive_loss(emb, batch_size):
@@ -164,7 +174,7 @@ def transformer_hyperparam_search():
             'num_heads': {'values': [4, 8]},
             'dropout': {'values': [0.1, 0.2, 0.4]},
             'num_layers': {'values': [2, 6, 10]},
-            'mode': {'values': ['decoder-contrastive']},
+            'mode': {'values': ['decoder']},
             'log_to_wandb': {'values': [True]}
         }
     }
@@ -175,26 +185,27 @@ def transformer_hyperparam_search():
 
 if __name__ == "__main__":
     # # Train single run
-    # Define hyperparameters
-    default_config = {
-        'learning_rate': 0.00013,
-        'num_epochs': 5000,
-        'batch_size': 32,
-        'd_input': 4,
-        'd_model': 256,
-        'd_linear': 64,
-        'num_heads': 4,
-        'dropout': 0.2,
-        'num_layers': 4,
-        'log_to_wandb': False,
-        'mode': 'decoder-contrastive'
-    }
+    # # Define hyperparameters
+    # default_config = {
+    #     'learning_rate': 0.00013,
+    #     'num_epochs': 5000,
+    #     'batch_size': 32,
+    #     'd_input': 4,
+    #     'd_model': 256,
+    #     'd_linear': 64,
+    #     'num_heads': 4,
+    #     'dropout': 0.2,
+    #     'num_layers': 4,
+    #     'log_to_wandb': False,
+    #     'mode': 'decoder-contrastive'
+    # }
+
     # # Or load from config file
     # config_file = "./configs/transformer_decoder_config.json"
     # with open(config_file, "r") as f:
     #     default_config = json.load(f)
 
-    train_transformer(default_config)
+    # train_transformer(default_config)
 
-    # # Hyperparameter search
-    # transformer_hyperparam_search()
+    # Hyperparameter search
+    transformer_hyperparam_search()
