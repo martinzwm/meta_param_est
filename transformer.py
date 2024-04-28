@@ -94,7 +94,7 @@ class TransformerDecoder(Transformer):
         x = torch.cat([cls_tokens, x], dim=1)
 
         # Create masking
-        mask = torch.triu(torch.ones(T+1, T+1)).to(x.device)
+        mask = torch.triu(torch.ones(T+1, T+1), diagonal=1).to(x.device)
 
         # Apply transformer layers
         for layer in self.layers:
