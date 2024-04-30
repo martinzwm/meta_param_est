@@ -36,6 +36,8 @@ def get_embeddings(model, dataloader, device):
         - X: embeddings
         - y: ground truth system parameters
     """
+    mean, std = 0.0004, 0.6515
+
     model.eval()
     y, X = [], []
     for _, (W, _, trajectories) in enumerate(dataloader):
@@ -43,6 +45,7 @@ def get_embeddings(model, dataloader, device):
         trajectories = trajectories.to(device)
         batch_size, sample_size, time_size, state_size = trajectories.shape
         data = trajectories.view(-1, time_size, state_size)
+        data = (data - mean) / std
 
         # Run model - not sure why torch.no_grad() would lead to nan results, need to partition to fit in memory
         num_partition = 10
@@ -223,7 +226,7 @@ def visualize_trajectory(model, ckpt_path="./ckpts/model_1000.pt", val_data_path
 
 if __name__ == "__main__":
     # Create model
-    config_file = "./configs/transformer_decoder_config.json"
+    config_file = "./configs/transformer_encoder_config.json"
     with open(config_file, "r") as f:
         config = json.load(f)
     d_input = config['d_input']
@@ -233,23 +236,23 @@ if __name__ == "__main__":
     dropout = config['dropout']
     num_layers = config['num_layers']
 
-    # model = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
-    model = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+    model = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+    # model = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers)
 
-    # # Evaluate model
-    # evaluate_transformer(
-    #     model,
-    #     ckpt_path="./ckpts/decoder_contr_best.pt", 
-    #     train_data_path="./data/train_data.pickle",
-    #     val_data_path="./data/val_data.pickle",
-    #     log_result=True,
-    # )
-
-    # Visualize trajectory
-    visualize_trajectory(
+    # Evaluate model
+    evaluate_transformer(
         model,
-        ckpt_path="./ckpts/model_2000.pt",
+        ckpt_path="./ckpts/model_5000.pt", 
+        train_data_path="./data/train_data.pickle",
         val_data_path="./data/val_data.pickle",
-        idx=0,
-        visualize=True
+        log_result=True,
     )
+
+    # # Visualize trajectory
+    # visualize_trajectory(
+    #     model,
+    #     ckpt_path="./ckpts/model_2000.pt",
+    #     val_data_path="./data/val_data.pickle",
+    #     idx=0,
+    #     visualize=True
+    # )

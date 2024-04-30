@@ -53,6 +53,7 @@ def train_transformer(config=None):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
 
     dataloader = get_dataloader(batch_size=32, data_path="./data/train_data.pickle", num_workers=8)
+    mean, std = 0.0004, 0.6515
 
     for epoch in tqdm.tqdm(range(num_epochs)):
         total_loss = 0.0
@@ -62,6 +63,7 @@ def train_transformer(config=None):
             
             # Get data
             trajectories = trajectories.to(device)
+            trajectories = (trajectories - mean) / std
             batch_size, sample_size, time_size, state_size = trajectories.shape
 
             # Subsample
@@ -200,12 +202,12 @@ if __name__ == "__main__":
     #     'mode': 'decoder-contrastive'
     # }
 
-    # # Or load from config file
-    # config_file = "./configs/transformer_decoder_config.json"
-    # with open(config_file, "r") as f:
-    #     default_config = json.load(f)
+    # Or load from config file
+    config_file = "./configs/transformer_encoder_config.json"
+    with open(config_file, "r") as f:
+        default_config = json.load(f)
 
-    # train_transformer(default_config)
+    train_transformer(default_config)
 
-    # Hyperparameter search
-    transformer_hyperparam_search()
+    # # Hyperparameter search
+    # transformer_hyperparam_search()
