@@ -133,6 +133,8 @@ def get_trajectories(model, dataloader, device, max_T):
         - pred_traj: predicted trajectories
         - gt_traj: ground truth trajectories
     """
+    mean, std = 0.0004, 0.6515
+
     model.eval()
     pred_traj, gt_traj = [], []
     for _, (W, _, trajectories) in enumerate(dataloader):
@@ -144,16 +146,16 @@ def get_trajectories(model, dataloader, device, max_T):
         gt_traj.append(data)
 
         # Get predicted trajectories
+        initial_point = (data[:, 0:1, :] - mean) / std
         # Method 1
-        out = model.generate(data[:, 0:1, :], max_T).detach()
+        out = model.generate(initial_point, max_T).detach()
 
         # # Method 2
+        # data = (data - mean) / std
         # emb = model(data)
-        # method2emb = emb
         # emb = emb[:, 1:-1, :]
         # out = model.pred_next_step(emb).detach()
         # out = torch.cat([data[:, 0:1, :], out], dim=1)
-        # method2out = out
 
         # # Method 3
         # x = data[:, 0:1, :]
@@ -168,11 +170,12 @@ def get_trajectories(model, dataloader, device, max_T):
     
     # Concatenate
     pred_traj = torch.cat(pred_traj, dim=0)
+    pred_traj = (pred_traj * std) + mean
     gt_traj = torch.cat(gt_traj, dim=0)
     return pred_traj, gt_traj
 
 
-def visualize_trajectory(model, ckpt_path="./ckpts/model_1000.pt", val_data_path="./data/val_data.pickle", idx=0, visualize=True):
+def visualize_trajectory(model, ckpt_path="./ckpts/model_1000.pt", val_data_path="./data/val_data.pickle", idx=0, log_result=True):
     """Analytically optimize a linear layer to map hidden vectors to parameters."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -190,7 +193,9 @@ def visualize_trajectory(model, ckpt_path="./ckpts/model_1000.pt", val_data_path
 
     mae = np.mean(np.abs(pred_traj - gt_traj))
     
-    if visualize:
+    if log_result:
+        print("MAE:", mae)
+
         fig, axs = plt.subplots(2, 1, figsize=(10, 10))
 
         times = np.arange(100)
@@ -226,7 +231,7 @@ def visualize_trajectory(model, ckpt_path="./ckpts/model_1000.pt", val_data_path
 
 if __name__ == "__main__":
     # Create model
-    config_file = "./configs/transformer_encoder_config.json"
+    config_file = "./configs/transformer_decoder_config.json"
     with open(config_file, "r") as f:
         config = json.load(f)
     d_input = config['d_input']
@@ -236,23 +241,23 @@ if __name__ == "__main__":
     dropout = config['dropout']
     num_layers = config['num_layers']
 
-    model = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
-    # model = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+    # model = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+    model = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers)
 
-    # Evaluate model
-    evaluate_transformer(
-        model,
-        ckpt_path="./ckpts/model_5000.pt", 
-        train_data_path="./data/train_data.pickle",
-        val_data_path="./data/val_data.pickle",
-        log_result=True,
-    )
-
-    # # Visualize trajectory
-    # visualize_trajectory(
+    # # Evaluate model
+    # evaluate_transformer(
     #     model,
-    #     ckpt_path="./ckpts/model_2000.pt",
+    #     ckpt_path="./ckpts/model_5000.pt", 
+    #     train_data_path="./data/train_data.pickle",
     #     val_data_path="./data/val_data.pickle",
-    #     idx=0,
-    #     visualize=True
+    #     log_result=True,
     # )
+
+    # Visualize trajectory
+    visualize_trajectory(
+        model,
+        ckpt_path="./ckpts/decoder_best.pt",
+        val_data_path="./data/val_data.pickle",
+        idx=0,
+        log_result=True
+    )
