@@ -7,7 +7,7 @@ import matplotlib.cm as cm
 
 import torch
 
-from transformer import Transformer, TransformerDecoder
+from transformer import Transformer, TransformerDecoder, EncoderDecoder
 from dynamics import get_dataloader
 from eval import visualize_params_with_labels
 
@@ -24,7 +24,7 @@ if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = False
 
 
-def get_embeddings(model, dataloader, device):
+def get_embeddings(model, dataloader, device, mode='encoder'):
     """
     Collect model embeddings and gt system parameters.
     
@@ -52,7 +52,10 @@ def get_embeddings(model, dataloader, device):
         data = torch.chunk(data, num_partition, dim=0)
         embedding_list = []
         for i in range(num_partition):
-            embedding = model(data[i]).detach()
+            if mode=='encoder-decoder':
+                embedding = model.encoder(data[i][:, :50, :]).detach() # only use first 50 steps b/c the model is used to seeing only ~50 steps
+            else:
+                embedding = model(data[i]).detach()
             embedding_list.append(embedding)
         embedding = torch.cat(embedding_list, dim=0)
         embedding = embedding[:, 0, :]
@@ -84,6 +87,7 @@ def evaluate_transformer(
     ckpt_path="./ckpts/model_1000.pt", 
     train_data_path="./data/train_data.pickle",
     val_data_path="./data/val_data.pickle",
+    mode='encoder',
     log_result=False,
 ):
     """Evaluate the model embeddings using linear probe to system parameters."""
@@ -96,7 +100,7 @@ def evaluate_transformer(
 
     # Get linear probe layer from training data
     dataloader = get_dataloader(batch_size=32, data_path=train_data_path, num_workers=4, shuffle=False)
-    x_train, y_train = get_embeddings(model, dataloader, device)
+    x_train, y_train = get_embeddings(model, dataloader, device, mode=mode)
     linear_layer = solve(x_train, y_train)
 
     # Evaluate on training data
@@ -106,7 +110,7 @@ def evaluate_transformer(
 
     # Evaluate on validation data
     dataloader = get_dataloader(batch_size=32, data_path=val_data_path, num_workers=4, shuffle=False)
-    x_val, y_val = get_embeddings(model, dataloader, device)
+    x_val, y_val = get_embeddings(model, dataloader, device, mode=mode)
     pred_y_val = torch.mm(x_val, linear_layer)
     mae_val = torch.mean(torch.abs(pred_y_val - y_val), dim=0)
     mae_val = mae_val.cpu().numpy()
@@ -121,7 +125,7 @@ def evaluate_transformer(
     return mae_train, mae_val
 
 
-def get_trajectories(model, dataloader, device, max_T):
+def get_trajectories(model, dataloader, device, max_T, mode='decoder'):
     """
     Collect model predicted and gt trajectories.
     
@@ -146,9 +150,14 @@ def get_trajectories(model, dataloader, device, max_T):
         gt_traj.append(data)
 
         # Get predicted trajectories
-        initial_point = (data[:, 0:1, :] - mean) / std
+        initial_point = (data[:, 0:30, :] - mean) / std
         # Method 1
-        out = model.generate(initial_point, max_T).detach()
+        if mode == 'encoder-decoder':
+            enc_emb = model.encoder(initial_point[:, :30, :])
+            out = model.decoder.generate(initial_point[:, -5:, :], max_T-29, enc_emb).detach()
+            out = torch.cat([initial_point, out[:, 5:, :]], dim=1)
+        else:
+            out = model.generate(initial_point, max_T-29).detach()
 
         # # Method 2
         # data = (data - mean) / std
@@ -175,7 +184,13 @@ def get_trajectories(model, dataloader, device, max_T):
     return pred_traj, gt_traj
 
 
-def visualize_trajectory(model, ckpt_path="./ckpts/model_1000.pt", val_data_path="./data/val_data.pickle", idx=0, log_result=True):
+def visualize_trajectory(
+        model, 
+        ckpt_path="./ckpts/model_1000.pt", val_data_path="./data/val_data.pickle", 
+        idx=0, 
+        mode='decoder',
+        log_result=True
+    ):
     """Analytically optimize a linear layer to map hidden vectors to parameters."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -186,9 +201,8 @@ def visualize_trajectory(model, ckpt_path="./ckpts/model_1000.pt", val_data_path
 
      # Load data
     dataloader = get_dataloader(batch_size=32, data_path=val_data_path, num_workers=4, shuffle=False)
-    pred_traj, gt_traj = get_trajectories(model, dataloader, device, max_T=99)
+    pred_traj, gt_traj = get_trajectories(model, dataloader, device, max_T=99, mode=mode)
     pred_traj = pred_traj.cpu().numpy()
-    # pred_traj = np.concatenate([np.zeros((pred_traj.shape[0], 1, pred_traj.shape[2])), pred_traj], axis=1)
     gt_traj = gt_traj.cpu().numpy()
 
     mae = np.mean(np.abs(pred_traj - gt_traj))
@@ -230,8 +244,18 @@ def visualize_trajectory(model, ckpt_path="./ckpts/model_1000.pt", val_data_path
 
 
 if __name__ == "__main__":
-    # Create model
-    config_file = "./configs/transformer_decoder_config.json"
+    mode = 'encoder-decoder'
+    # Set config file
+    if mode == 'encoder':
+        config_file = "./configs/transformer_encoder_config.json"
+    elif mode == 'decoder':
+        config_file = "./configs/transformer_decoder_config.json"
+    elif mode == 'encoder-decoder':
+        config_file = "./configs/transformer_encoder_decoder_config.json"
+    else:
+        raise ValueError("Invalid mode")
+    
+    # Load config parameters
     with open(config_file, "r") as f:
         config = json.load(f)
     d_input = config['d_input']
@@ -241,23 +265,32 @@ if __name__ == "__main__":
     dropout = config['dropout']
     num_layers = config['num_layers']
 
-    # model = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
-    model = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+    # Create model
+    if mode == 'encoder':
+        model = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+    elif mode == 'decoder':
+        model = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+    elif mode == 'encoder-decoder':
+        encoder = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+        decoder = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers)
+        model = EncoderDecoder(encoder, decoder)
 
-    # # Evaluate model
-    # evaluate_transformer(
-    #     model,
-    #     ckpt_path="./ckpts/model_5000.pt", 
-    #     train_data_path="./data/train_data.pickle",
-    #     val_data_path="./data/val_data.pickle",
-    #     log_result=True,
-    # )
+    # Evaluate model
+    evaluate_transformer(
+        model,
+        ckpt_path="./ckpts/enc_dec_best.pt", 
+        train_data_path="./data/train_data.pickle",
+        val_data_path="./data/val_data.pickle",
+        mode='encoder-decoder',
+        log_result=True,
+    )
 
     # Visualize trajectory
     visualize_trajectory(
         model,
-        ckpt_path="./ckpts/decoder_best.pt",
+        ckpt_path="./ckpts/enc_dec_best.pt",
         val_data_path="./data/val_data.pickle",
         idx=0,
+        mode='encoder-decoder',
         log_result=True
     )

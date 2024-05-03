@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from info_nce import InfoNCE
 
-from transformer import Transformer, TransformerDecoder
+from transformer import Transformer, TransformerDecoder, EncoderDecoder
 from dynamics import get_dataloader
 from eval_transformer import evaluate_transformer, visualize_trajectory
 
@@ -44,6 +44,10 @@ def train_transformer(config=None):
         model = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers).to(device)
     elif mode == 'decoder' or mode == 'decoder-contrastive':
         model = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers).to(device)
+    elif mode == 'encoder-decoder':
+        encoder = Transformer(d_input, d_model, d_linear, num_heads, dropout, num_layers).to(device)
+        decoder = TransformerDecoder(d_input, d_model, d_linear, num_heads, dropout, num_layers).to(device)
+        model = EncoderDecoder(encoder, decoder).to(device)
     else:
         raise ValueError("Invalid mode")
     
@@ -73,22 +77,48 @@ def train_transformer(config=None):
 
             # Forward pass
             data = data.view(-1, time_size, state_size)
-            emb = model(data)
             
             if mode == "encoder": # Compute contrastive loss
+                emb = model(data)
                 loss = contrastive_loss(emb, batch_size)
             
             elif mode == "decoder": # Compute regression loss
                 # Get predicted next steps
+                emb = model(data)
                 emb = emb[:, 1:-1, :]
                 out = model.pred_next_step(emb)
-                # Compute regression loss
+                # Compute regression loss on predicted next steps
                 loss = regression_loss(out, data)
+                # Compute regression loss on predict full trajectory
+                out = model.generate(data[:, 0:1, :], time_size-1)
+                out = out[:, 1:, :] # exclude the inital point
+                loss += regression_loss(out, data)
             
             elif mode == "decoder-contrastive": # Compute contrastive loss + regression loss
+                emb = model(data)
                 emb = emb[:, 1:-1, :]
                 out = model.pred_next_step(emb)
                 loss = contrastive_loss(emb, batch_size) + regression_loss(out, data)
+            
+            elif mode == "encoder-decoder": # Compute contrastive loss + regression loss
+                loss_contr, loss_next_step, loss_traj = 0, 0, 0
+                idx = torch.randint(int(time_size/4), int(time_size/4*3), (1,))
+                enc_emb, dec_emb = model(data, idx)
+
+                # Compute contrastive loss
+                loss_contr = contrastive_loss(enc_emb, batch_size)
+
+                # Compute regression loss on predicted next steps
+                emb = dec_emb[:, 1:-1, :]
+                out = model.decoder.pred_next_step(emb)
+                loss_next_step = regression_loss(out, data[:, idx:, :])
+
+                # Compute regression loss on predict full trajectory
+                out = model.decoder.generate(data[:, idx-5:idx, :], time_size-idx-1, enc_emb)
+                out = out[:, 5:, :] # exclude the inital point
+                loss_traj = regression_loss(out, data[:, idx:, :])
+                
+                loss = loss_contr + loss_next_step + loss_traj
 
             # Backward pass
             loss.backward()
@@ -119,15 +149,32 @@ def train_transformer(config=None):
                 )
                 print("MAE (params) on the training set: ", train_mae.mean())
                 wandb.log({"train_mae": train_mae.mean().item()}) if log_to_wandb else None
+            
             elif mode == "decoder" or mode == "decoder-contrastive":
                 traj_val_mae = visualize_trajectory(
                     model, ckpt_path=model_path,
                     val_data_path="./data/val_data.pickle",
-                    visualize=False
+                    log_result=False
                 )
                 print("MAE (trajectories) on the validation set: ", traj_val_mae)
                 wandb.log({"val_traj_mae": traj_val_mae}) if log_to_wandb else None
-
+            
+            elif mode == "encoder-decoder":
+                train_mae, val_mae = evaluate_transformer(
+                    model, ckpt_path=model_path, mode="encoder-decoder"
+                )
+                print("MAE (params) on the training set: ", train_mae.mean())
+                traj_val_mae = visualize_trajectory(
+                    model, ckpt_path=model_path,
+                    val_data_path="./data/val_data.pickle",
+                    mode="encoder-decoder",
+                    log_result=False
+                )
+                print("MAE (trajectories) on the validation set: ", traj_val_mae)
+                wandb.log({
+                    "train_mae": train_mae.mean().item(),
+                    "val_traj_mae": traj_val_mae
+                }) if log_to_wandb else None
 
 def contrastive_loss(emb, batch_size):
     """Compute contrastive loss for a batch of embeddings from transformer encoder."""
@@ -203,7 +250,7 @@ if __name__ == "__main__":
     # }
 
     # Or load from config file
-    config_file = "./configs/transformer_encoder_config.json"
+    config_file = "./configs/transformer_encoder_decoder_config.json"
     with open(config_file, "r") as f:
         default_config = json.load(f)
 
