@@ -7,7 +7,7 @@
     "d_linear": 64,
     "num_heads": 4,
     "dropout": 0.2,
-    "num_layers": 4,
+    "num_layers": 2,
     "log_to_wandb": false,
     "mode": "decoder"
 }
