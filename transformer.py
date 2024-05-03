@@ -10,15 +10,17 @@ class TransformerBlock(nn.Module):
         super(TransformerBlock, self).__init__()
         # Multihead attention
         self.multihead_attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
+        self.multihead_attn_2 = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
 
         # Pointwise feedforward
+        self.norm = nn.LayerNorm(d_model)
         self.linear1 = nn.Linear(d_model, d_linear)
         self.norm1 = nn.LayerNorm(d_model)
         self.linear2 = nn.Linear(d_linear, d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, k=None, v=None):
         """
         Args:
             - x [=] (B, T, d)
@@ -27,7 +29,13 @@ class TransformerBlock(nn.Module):
                 tokens (e.g., <PAD>, <SEP>). A value of 1 means ignored, 0 means keep.
         """
         # Attention
-        attn_output, alpha = self.multihead_attn(x, x, x, attn_mask=mask)
+        attn_output, alpha = self.multihead_attn(x, x, x, attn_mask=mask) # self-attention
+        x = x + self.dropout(attn_output)
+        x = self.norm(x)
+        if k is not None and v is not None: # cross-attention
+            attn_output, alpha = self.multihead_attn_2(x, k, v)
+        else: # 2nd self-attention
+            attn_output, alpha = self.multihead_attn_2(x, x, x, attn_mask=mask)
         x = x + self.dropout(attn_output) # dropout and residual connection
         x = self.norm1(x)
         
@@ -82,7 +90,7 @@ class TransformerDecoder(Transformer):
         super(TransformerDecoder, self).__init__(d_input, d_model, d_linear, num_heads, dropout, num_layers, max_T)
         self.output_linear = nn.Linear(d_model, d_input)
 
-    def forward(self, x):
+    def forward(self, x, enc_emb=None):
         # Apply linear projection and add position embedding
         x = self.input_linear(x)
         B, T = x.shape[:2]
@@ -99,19 +107,31 @@ class TransformerDecoder(Transformer):
 
         # Apply transformer layers
         for layer in self.layers:
-            x = layer(x, mask)
+            x = layer(x, mask, enc_emb, enc_emb)
         return x
     
     def pred_next_step(self, emb):
         return self.output_linear(emb)
     
-    def generate(self, x, gen_T):
+    def generate(self, x, gen_T, enc_emb=None):
         # with torch.no_grad():
         for i in range(gen_T):
-            emb = self.forward(x)
+            emb = self.forward(x, enc_emb)
             x_out = self.pred_next_step(emb[:, -1, :]).unsqueeze(1)
             x = torch.cat([x, x_out], dim=1)
         return x
+
+
+class EncoderDecoder(nn.Module):
+    def __init__(self, encoder, decoder):
+        super(EncoderDecoder, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def forward(self, x, ind=0):
+        enc_emb = self.encoder(x[:, :ind, :])
+        out = self.decoder(x[:, ind:, :], enc_emb)
+        return enc_emb, out
 
 
 class TestModel:
