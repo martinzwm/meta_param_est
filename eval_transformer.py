@@ -125,7 +125,7 @@ def evaluate_transformer(
     return mae_train, mae_val
 
 
-def get_trajectories(model, dataloader, device, max_T, mode='decoder'):
+def get_trajectories(model, dataloader, device, max_T, mode='decoder', num_pt_enc=30):
     """
     Collect model predicted and gt trajectories.
     
@@ -150,30 +150,13 @@ def get_trajectories(model, dataloader, device, max_T, mode='decoder'):
         gt_traj.append(data)
 
         # Get predicted trajectories
-        initial_point = (data[:, 0:30, :] - mean) / std
-        # Method 1
+        initial_point = (data[:, :num_pt_enc, :] - mean) / std
         if mode == 'encoder-decoder':
-            enc_emb = model.encoder(initial_point[:, :30, :])
-            out = model.decoder.generate(initial_point[:, -5:, :], max_T-29, enc_emb).detach()
+            enc_emb = model.encoder(initial_point)
+            out = model.decoder.generate(initial_point[:, -5:, :], max_T-num_pt_enc+1, enc_emb).detach()
             out = torch.cat([initial_point, out[:, 5:, :]], dim=1)
         else:
-            out = model.generate(initial_point, max_T-29).detach()
-
-        # # Method 2
-        # data = (data - mean) / std
-        # emb = model(data)
-        # emb = emb[:, 1:-1, :]
-        # out = model.pred_next_step(emb).detach()
-        # out = torch.cat([data[:, 0:1, :], out], dim=1)
-
-        # # Method 3
-        # x = data[:, 0:1, :]
-        # out = x
-        # for i in range(max_T):
-        #     emb = model(x)
-        #     x_out = model.pred_next_step(emb[:, -1, :]).unsqueeze(1)
-        #     out = torch.cat([out, x_out], dim=1).detach() # track predicted trajectory
-        #     x = torch.cat([x, data[:, i+1:i+2, :]], dim=1) # use ground truth for next step
+            out = model.generate(initial_point, max_T-num_pt_enc+1).detach()
 
         pred_traj.append(out)
     
@@ -189,6 +172,7 @@ def visualize_trajectory(
         ckpt_path="./ckpts/model_1000.pt", val_data_path="./data/val_data.pickle", 
         idx=0, 
         mode='decoder',
+        num_pt_enc=30,
         log_result=True
     ):
     """Analytically optimize a linear layer to map hidden vectors to parameters."""
@@ -292,5 +276,6 @@ if __name__ == "__main__":
         val_data_path="./data/val_data.pickle",
         idx=0,
         mode='encoder-decoder',
+        num_pt_enc=30,
         log_result=True
     )
