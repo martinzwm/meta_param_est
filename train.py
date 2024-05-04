@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from info_nce import InfoNCE
 
-from model import TrajectoryLSTM, AutoregressiveLSTM, VAEAutoencoder
+from model.model import TrajectoryLSTM, AutoregressiveLSTM, VAEAutoencoder
 from dynamics import get_dataloader
 from eval import evaluate
 
@@ -80,7 +80,7 @@ def train_vae_contrastive(config=None):
     optimizer = optim.Adam(vae.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
     
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=8)
+    dataloader = get_dataloader(batch_size=32, data_path="./data/train_data.pickle", num_workers=8)
     loss_fn_contrastive = InfoNCE()
     loss_fn_predictive = nn.MSELoss()
     loss_fn_reconstruct = nn.MSELoss()
@@ -215,7 +215,7 @@ def train_contrastive(config=None):
     optimizer = optim.Adam(encoder.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs, T_mult=1, eta_min=1e-4)
 
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle", num_workers=8)
+    dataloader = get_dataloader(batch_size=32, data_path="./data/train_data.pickle", num_workers=8)
     loss_fn_contrastive = InfoNCE()
     loss_fn_predictive = nn.MSELoss()
 
@@ -320,7 +320,7 @@ def train_linear(ckpt_path="./ckpts/model_10000.pt", verbose=False):
     encoder = TrajectoryLSTM(hidden_size=10).to(device)
     encoder.load_state_dict(torch.load(ckpt_path))
     optimizer = optim.Adam(encoder.parameters(), lr=2e-3)
-    dataloader = get_dataloader(batch_size=32, data_path="train_data.pickle")
+    dataloader = get_dataloader(batch_size=32, data_path="./data/train_data.pickle")
     loss_fn = nn.MSELoss()
 
     num_epochs = 10000
@@ -417,11 +417,11 @@ def lstm_hyperparam_search():
 
 if __name__ == "__main__":
     # Train
-    # train_contrastive(default_config)    
+    train_contrastive(default_config)    
     # train_vae_contrastive(default_config)
     
     # # Sweep
-    lstm_hyperparam_search()
+    # lstm_hyperparam_search()
     # vae_hyperparam_search()
 
     # # Evaluate on training set

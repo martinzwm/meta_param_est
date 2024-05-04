@@ -7,7 +7,7 @@ import matplotlib.cm as cm
 
 import torch
 
-from transformer import Transformer, TransformerDecoder, EncoderDecoder
+from model.transformer import Transformer, TransformerDecoder, EncoderDecoder
 from dynamics import get_dataloader
 from eval import visualize_params_with_labels
 

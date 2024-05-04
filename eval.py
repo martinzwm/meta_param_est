@@ -6,7 +6,7 @@ import matplotlib.cm as cm
 
 import torch
 
-from model import TrajectoryLSTM, AutoregressiveLSTM, VAEAutoencoder
+from model.model import TrajectoryLSTM, AutoregressiveLSTM, VAEAutoencoder
 from dynamics import get_dataloader
 
 # seed

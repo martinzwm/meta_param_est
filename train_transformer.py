@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from info_nce import InfoNCE
 
-from transformer import Transformer, TransformerDecoder, EncoderDecoder
+from model.transformer import Transformer, TransformerDecoder, EncoderDecoder
 from dynamics import get_dataloader
 from eval_transformer import evaluate_transformer, visualize_trajectory
 
