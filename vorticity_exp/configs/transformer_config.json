@@ -1,0 +1,12 @@
+{
+    "learning_rate": 0.0002,
+    "num_epochs": 5000,
+    "batch_size": 32,
+    "d_input": 512,
+    "d_model": 512,
+    "d_linear": 64,
+    "num_heads": 8,
+    "dropout": 0.2,
+    "num_layers": 3,
+    "log_to_wandb": true
+}
